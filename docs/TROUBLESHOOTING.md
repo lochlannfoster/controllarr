@@ -45,7 +45,7 @@ Every failing source names itself in the section it belongs to — Controllarr n
 |---|---|---|
 | **Unavailable — No torrents found** | your indexers returned nothing for it | Check the indexers in Prowlarr (or in the arr itself); a Cloudflare-fronted one needs FlareSolverr. |
 | **Unavailable — Only low-seed (max N)** | every candidate is below the release threshold your arrs are set to | Lower it in Settings ▸ Quality & size, or open the title and **Search…** to grab one by hand. Verdicts are cached three hours; **Refresh** re-checks. |
-| **Rejected: too big / quality not allowed** | your own size cap or profile | Raise **Maximum size**, or change the profile. |
+| **Rejected: too big / quality not allowed** | the app's own size limits or the title's quality profile | Put the title on a roomier profile (its row's quality chip), or apply a wider [TRaSH profile](DASHBOARD.md#trash-guides) — the size limits are per quality and come from the guide. |
 | **A download is stalled** | the amber reason on the row says which (*dead swarm*, *none reachable*, *only N %*, *queued behind the cap*) | **Blocklist & retry**, or leave it — your stack's own cleanup will get to it. |
 | **A show is Partial with files** | intended: any missing episode in a tracked season | Expand it, tick the episodes, **Search** or **Untrack**. |
 | **A purged title is still in Jellyfin or Bazarr** | both are asked to rescan on a purge; a scan takes a moment | Wait a minute; Settings ▸ Media server ▸ **Scan library now**. |

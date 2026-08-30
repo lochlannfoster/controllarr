@@ -88,6 +88,19 @@ test.describe('granular controls', () => {
     await expect(page.locator('dialog.drawer #dwseasons .season')).toHaveCount(2);
   });
 
+  test('each library row carries its quality profile, and the chip changes it for that title alone', async ({ page, control }) => {
+    const row = page.locator('#library .item[data-kind="movie"]').first();
+    const chip = row.locator('.qchip');
+    await expect(chip).toHaveText('Any');                       // what this title may currently grab, on the row itself
+    await chip.click();
+    const dlg = page.locator('dialog[open]');
+    await expect(dlg).toContainText('Quality profile');
+    await expect(dlg.locator('select option:checked')).toHaveText('Any');   // opens on the profile it is actually on
+    await dlg.locator('select').selectOption({ label: 'HD-1080p' });
+    await dlg.getByRole('button', { name: 'Set' }).click();
+    await expect.poll(async () => (await control()).calls.some(c => c[0] === 'radarr' && c[1] === 'PUT' && /\/movie\//.test(c[2]) && c[3]?.qualityProfileId === 2)).toBe(true);
+  });
+
   test('the system monitor: a compact line that expands to every container with its task and last log line', async ({ page }) => {
     await expect(page.locator('#system .sys-chip')).toHaveCount(await page.locator('#system .sys-chip').count());
     await expect(page.locator('#system .sys-chip').first()).toContainText('CPU');
@@ -108,7 +121,7 @@ test.describe('granular controls', () => {
   });
 
   test('Tune applies a preset from the dashboard after naming what it does', async ({ page, control }) => {
-    await expect(page.locator('#tune optgroup')).toHaveCount(2);
+    await expect(page.locator('#tune optgroup')).toHaveCount(1);   // throughput only; quality moved to the guide
     await page.locator('#tune').selectOption('Everything paused');
     const dlg = page.locator('dialog.dlg');
     await expect(dlg.locator('#dlg-title')).toHaveText('Apply preset Everything paused');
@@ -126,9 +139,9 @@ test.describe('settings, granular', () => {
   test('Presets is the first group: every preset with a description and an Apply that confirms', async ({ page, control }) => {
     await page.goto('/settings');
     await expect(page.locator('#pane .pane-head h2')).toHaveText('Presets');
-    await expect(page.locator('.preset')).toHaveCount(8);
+    await expect(page.locator('.preset')).toHaveCount(5);   // throughput only: quality is the guide's, applied from a diff
     await expect(page.locator('.preset').first()).toContainText('Everything paused');
-    await page.locator('.preset', { hasText: /^Balanced/ }).getByRole('button', { name: 'Apply' }).click();   // not "1080p balanced"
+    await page.locator('.preset', { hasText: /^Balanced/ }).getByRole('button', { name: 'Apply' }).click();
     const dlg = page.locator('dialog.dlg');
     await expect(dlg.locator('#dlg-title')).toHaveText('Apply preset Balanced');
     await dlg.getByRole('button', { name: 'Apply' }).click();

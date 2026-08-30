@@ -49,7 +49,7 @@ With a read-only Docker socket it also shows each container's state, memory and 
 - **Downloads** — what the client is doing, per item, with the reason when nothing moves.
 - **Library** — every tracked title by stage; a show expands into its episodes with sizes
   and subtitle status; tick some and act on exactly those.
-- **Settings** — quality, size, languages, subtitles, request defaults, users and roles, written straight into the apps.
+- **Settings** — quality, size, languages, subtitles, request defaults, users and roles, written straight into the apps; and a log of every write the panel has made.
 
 <table>
   <tr>
@@ -73,8 +73,10 @@ With a read-only Docker socket it also shows each container's state, memory and 
 <code>tests/fake_stack.py</code>: the films and shows are real, everything else — users, hosts, paths,
 sizes and states — is invented. No screenshot here shows anybody's library.</sub>
 
-Stdlib Python and vanilla ES modules: no build step, no framework, no telemetry, nothing
-loaded from outside your network.
+Stdlib Python and vanilla ES modules: no build step, no framework, no telemetry. The page loads
+nothing from outside your network, and the panel makes exactly one outbound request — fetching the
+TRaSH Guides quality data, when you press **Refresh the guide**. A copy ships with it, so you need
+never press it.
 
 ## Documentation
 

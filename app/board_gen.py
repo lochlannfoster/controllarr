@@ -96,7 +96,7 @@ def generate(arr, qbit, H, js_base, config_dir, min_seeders=5, backup_dir="", ca
                     else: continue
                     cats[k] = cats.get(k, 0) + 1
             top = max(cats, key=cats.get) if cats else ""
-            reason = {"size": f"Rejected: too big for size cap ({best} seeders available)",
+            reason = {"size": f"Rejected: too big for the size limit ({best} seeders available)",
                       "quality": f"Rejected: quality not allowed ({best} seeders available)",
                       "match": "Can't match releases to this show (naming/scene mismatch)",
                       "have": "Already have these episodes"}.get(top, f"Rejected by rules ({best} seeders exist)")
@@ -104,12 +104,16 @@ def generate(arr, qbit, H, js_base, config_dir, min_seeders=5, backup_dir="", ca
         cache[ck] = {"stage": stage, "reason": reason, "seeders": best, "checked": now}
         return stage, reason, best
 
+    # the profile a title is on decides what it may grab, so the row says which one — and lets it be changed there
+    profname = {app: {p.get("id"): p.get("name") for p in (arr(app, "/qualityprofile")[1] or []) if isinstance(p, dict)}
+                for app in ("radarr", "sonarr")}
     items = []
     for m in (arr("radarr", "/movie")[1] or []):
         if not m.get("monitored"): continue
         base = dict(id=m["id"], tmdbId=m.get("tmdbId"), title=m["title"], year=m.get("year"),
                     kind="movie", poster=_poster(m.get("images")), who=req_by_tmdb.get(m.get("tmdbId"), ""),
-                    size=m.get("sizeOnDisk", 0) or 0, runtime=m.get("runtime") or 0)
+                    size=m.get("sizeOnDisk", 0) or 0, runtime=m.get("runtime") or 0,
+                    profile=profname["radarr"].get(m.get("qualityProfileId"), ""))
         if m.get("hasFile"):
             items.append(dict(base, stage="Available", reason="", detail="")); continue
         if m["id"] in rq:
@@ -126,7 +130,8 @@ def generate(arr, qbit, H, js_base, config_dir, min_seeders=5, backup_dir="", ca
         stt = s.get("statistics", {}); have = stt.get("episodeFileCount", 0); tot = stt.get("episodeCount", 0)
         base = dict(id=s["id"], tvdbId=s.get("tvdbId"), title=s["title"], kind="tv",
                     poster=_poster(s.get("images")), who=req_by_tvdb.get(s.get("tvdbId"), ""),
-                    size=stt.get("sizeOnDisk", 0) or 0, runtime=s.get("runtime") or 0, have=have, total=tot)   # runtime = minutes per episode
+                    size=stt.get("sizeOnDisk", 0) or 0, runtime=s.get("runtime") or 0, have=have, total=tot,   # runtime = minutes per episode
+                    profile=profname["sonarr"].get(s.get("qualityProfileId"), ""))
         if tot and have >= tot:
             items.append(dict(base, stage="Available", reason="", detail=f"{have}/{tot}")); continue
         if s["id"] in sq:

@@ -2,7 +2,7 @@
 capability enforcement, the JSON contracts of every section, ETags, static caching, the source-failure
 reporting, what an install without a given service does, and the action → app wiring (asserted on the
 fake's call log)."""
-import http.client, json, os, stat, sys, time, unittest
+import http.client, json, os, re, stat, sys, time, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import fake_stack, harness
@@ -125,7 +125,7 @@ class Sections(unittest.TestCase):
         self.assertEqual(hd["Cache-Control"], "private, no-cache")
     def test_drawer_data(self):
         st, d = self.json("/api/item?kind=movie&id=2")
-        self.assertEqual((d["title"], d["stage"], len(d["torrents"]), d["profiles"][0]["name"]), ("Blade Runner 2049", "Downloading", 1, "HD-1080p"))
+        self.assertEqual((d["title"], d["stage"], len(d["torrents"]), [p["name"] for p in d["profiles"]]), ("Blade Runner 2049", "Downloading", 1, ["Any", "HD-1080p"]))
         st, d = self.json("/api/item?kind=tv&id=12"); self.assertEqual([s["season"] for s in d["seasons"]], [1, 2]); self.assertEqual(d["sub_missing"], 1)
         self.assertEqual(self.json("/api/item?kind=movie&id=999")[1], {})
         st, d = self.json("/api/item?kind=movie&id=1"); self.assertEqual([t["name"] for t in d["torrents"]], ["Arrival.2016.1080p.WEB-DL"])   # seeding, out of the queue: found through Radarr's history
@@ -213,7 +213,7 @@ class SecretsAtRest(unittest.TestCase):
     def test_no_endpoint_and_no_log_line_carries_a_key(self):
         c = H.admin_cookie()
         paths = ["/", "/settings", "/api/board", "/api/attention", "/api/live", "/api/system", "/api/reference",
-                 "/api/me", "/api/users", "/api/roles", "/api/config/export", "/api/config/presets",
+                 "/api/me", "/api/users", "/api/roles", "/api/log", "/api/config/export", "/api/config/presets",
                  "/api/item?kind=movie&id=2", "/api/series-tree?seriesId=12", "/api/episodes?seriesId=12",
                  "/api/rootfolders?kind=movie", "/api/qualityprofiles?kind=movie", "/api/releases?kind=movie&id=2",
                  "/api/sub-search?kind=movie&id=1", "/api/consequence?action=purge&kind=movie&id=2",
@@ -323,8 +323,10 @@ class Actions(unittest.TestCase):
         self.assertEqual(self.h.calls("radarr", "POST"), [])                                              # nothing reached a backend
         st, j = self.act({"action": "retry", "kind": "movie", "id": 2}, self.viewer); self.assertEqual((st, j["ok"]), (200, True))   # ordinary action is fine
     def test_admin_routes_are_gated(self):
-        for path in ("/api/users", "/api/roles", "/api/set/qbit", "/api/config/export", "/api/config/presets"): self.assertEqual(self.h.get(path, self.viewer)[0], 403, path)
-        for path in ("/api/users", "/api/roles", "/api/set/qbit", "/api/config/defaults", "/api/prowlarr", "/api/ntfy-test"):
+        for path in ("/api/users", "/api/roles", "/api/set/qbit", "/api/config/export", "/api/config/presets",
+                     "/api/trash", "/api/trash/plan?app=radarr&name=WEB%201080p"): self.assertEqual(self.h.get(path, self.viewer)[0], 403, path)
+        for path in ("/api/users", "/api/roles", "/api/set/qbit", "/api/config/defaults", "/api/prowlarr", "/api/ntfy-test",
+                     "/api/trash/apply", "/api/trash/rollback", "/api/trash/refresh"):
             self.assertEqual(self.h.post(path, {}, self.viewer)[0], 403, path)
         self.assertEqual(self.h.get("/settings", self.viewer)[1]["Location"], "/"); self.assertEqual(self.h.get("/settings", self.admin)[0], 200)
         st, me = self.h.json("/api/me", self.viewer); self.assertEqual(me["role"], "user"); self.assertFalse(any(me["caps"].values()))
@@ -383,10 +385,11 @@ class Actions(unittest.TestCase):
         st, me = h.json("/api/me", self.viewer); self.assertTrue(me["caps"]["can_purge"]); self.assertFalse(me["caps"]["can_remove"])
         h.post("/api/roles", {"role": "user"}, self.admin)
         st, j = h.post("/api/users/delete", {"username": "admin"}, self.admin); self.assertEqual(j["message"], "Can't remove the last admin")
-        st, ex = h.json("/api/config/export", self.admin); self.assertEqual(set(ex), {"radarr", "sonarr", "qbit", "bazarr", "notify"}); self.assertNotIn("cap", ex["qbit"])
+        st, ex = h.json("/api/config/export", self.admin); self.assertEqual(set(ex), {"radarr", "sonarr", "qbit", "bazarr", "notify", "arr"}); self.assertNotIn("cap", ex["qbit"])
+        self.assertEqual(set(ex["arr"]), {"radarr", "sonarr"}); self.assertTrue(ex["arr"]["radarr"]["quality_definitions"])   # a snapshot that cannot undo a sync is not a snapshot
         st, ps = h.json("/api/config/presets", self.admin)
-        self.assertEqual([p["name"] for p in ps], ["Everything paused", "Upload off", "Balanced", "Overclock", "Off-peak only", "4K quality", "1080p balanced", "Data-saver"])
-        self.assertTrue(all(p["desc"] and p["group"] in ("throughput", "quality") for p in ps))
+        self.assertEqual([p["name"] for p in ps], ["Everything paused", "Upload off", "Balanced", "Overclock", "Off-peak only"])
+        self.assertTrue(all(p["desc"] and p["group"] == "throughput" for p in ps))   # quality is the guide's, and is applied from a diff, not a description
         st, j = h.post("/api/config/preset", {"name": "Off-peak only"}, self.admin); self.assertTrue(j["ok"]); self.assertIn("Off-peak only applied", j["message"])
         h.control(clear_calls=True)
         st, j = h.post("/api/config/preset", {"name": "Everything paused"}, self.admin); self.assertTrue(j["ok"]); self.assertIn("All paused", j["message"])
@@ -397,6 +400,66 @@ class Actions(unittest.TestCase):
         self.assertTrue(h.calls("qbittorrent", "POST", "torrents/start"))
         self.assertEqual(h.post("/api/config/preset", {"name": "nope"}, self.admin)[0], 400)
         self.assertEqual(h.post("/api/refresh", {}, self.viewer), (200, {"ok": True}))
+
+
+class ActionLog(unittest.TestCase):
+    """The durable record behind Settings > Action log: what a write puts in it, who may read it, and that
+    it survives the container being recreated (docs/DASHBOARD.md, Settings)."""
+    @classmethod
+    def setUpClass(cls):
+        H.control(reset=True); cls.h = harness.Harness().start(); cls.h.add_user("viewer", "viewer-pw")
+        cls.admin = cls.h.admin_cookie(); cls.viewer = cls.h.login("viewer", "viewer-pw"); assert cls.viewer
+    @classmethod
+    def tearDownClass(cls): cls.h.stop(); H.control(reset=True)
+    def log(self, query="", cookie=None): return self.h.json("/api/log" + query, cookie or self.admin)[1]
+
+    def test_a_write_lands_as_one_entry_naming_its_real_target(self):
+        st, j = self.h.post("/api/action", {"action": "retry", "kind": "movie", "id": 2}, self.admin); self.assertTrue(j["ok"], j)
+        d = self.log("?action=retry")
+        self.assertEqual(d["cap"], 2000)                                                     # the number docs/DASHBOARD.md states
+        e = d["entries"][0]
+        self.assertEqual(sorted(e), sorted(["ts", "type", "user", "role", "action", "target", "result", "ms", "msg"]))
+        self.assertEqual((e["type"], e["user"], e["role"], e["action"], e["target"], e["result"], e["msg"]),
+                         ("action", "admin", "admin", "retry", "movie:2", "ok", "Search triggered"))
+        self.assertIsInstance(e["ms"], int); self.assertLessEqual(abs(e["ts"] - time.time()), 120)
+        st, j = self.h.post("/api/action", {"action": "nonsense", "kind": "movie", "id": 2}, self.admin)
+        self.assertEqual((st, self.log("?action=nonsense")["entries"][0]["result"]), (400, "fail"))   # a refusal is part of the record
+
+    def test_an_account_change_is_the_same_record_under_its_own_type(self):
+        st, j = self.h.post("/api/users", {"username": "logged", "password": "logged-pw", "role": "user"}, self.admin); self.assertTrue(j["ok"], j)
+        e = self.log("?action=user_save")["entries"][0]
+        self.assertEqual((e["type"], e["action"], e["target"], e["result"], e["ms"]), ("account", "user_save", "logged", "ok", None))
+        self.h.post("/api/users/delete", {"username": "logged"}, self.admin)
+        self.assertEqual(self.log("?action=delete")["entries"][0]["target"], "logged")
+
+    def test_filters_come_from_the_whole_ring(self):
+        st, j = self.h.post("/api/action", {"action": "retry", "kind": "movie", "id": 2}, self.viewer); self.assertTrue(j["ok"], j)
+        d = self.log()
+        self.assertIn("viewer", d["users"]); self.assertIn("admin", d["users"]); self.assertIn("retry", d["actions"])
+        self.assertEqual({e["user"] for e in self.log("?user=viewer")["entries"]}, {"viewer"})
+        self.assertEqual(len(self.log("?limit=1")["entries"]), 1)
+        self.assertEqual(self.log("?limit=1")["total"], d["total"])                           # the ring is not what was shown
+        self.assertEqual(self.log("?user=nobody")["entries"], [])
+
+    def test_only_an_admin_reads_it_and_nobody_writes_it(self):
+        self.assertEqual(self.h.get("/api/log", self.viewer)[0], 403)                          # Settings is admin-only; so is its record
+        self.assertEqual(self.h.get("/api/log")[0], 302)                                       # signed out: the login page
+        self.assertEqual(self.h.post("/api/log", {}, self.admin)[0], 404)                      # read-only: there is no writing route
+
+    def test_the_file_is_private_and_outlives_the_process(self):
+        self.h.post("/api/action", {"action": "retry", "kind": "movie", "id": 2}, self.admin)
+        path = os.path.join(self.h.sb_dir, "actions.log")
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        before = self.log()["total"]
+        self.h.restart()                                                                       # as recreating the container would
+        self.assertEqual(self.log("", self.h.admin_cookie())["total"], before)
+
+    def test_no_key_reaches_the_record(self):
+        key = fake_stack.KEYS["radarr"]
+        self.h.post("/api/action", {"action": "t_delete", "hash": key, "name": key}, self.admin)
+        body = self.h.get("/api/log", self.admin)[2].decode(errors="replace")
+        self.assertNotIn(key, body)
+        with open(os.path.join(self.h.sb_dir, "actions.log")) as f: self.assertNotIn(key, f.read())
 
 
 class GranularPurges(unittest.TestCase):
@@ -447,3 +510,188 @@ class GranularPurges(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionFollowsTheAccount(unittest.TestCase):
+    """A cookie lasts 30 days. Without a check against the account store on every request, a user deleted in
+    Settings keeps their access until it expires, and a demoted admin stays an admin on the device they were
+    already signed in on (docs/DASHBOARD.md ▸ Settings ▸ Users & roles)."""
+    def setUp(self): self.admin = H.admin_cookie()
+
+    def test_deleting_a_user_ends_their_open_session(self):
+        H.add_user("shortlived", "shortlived-pw")
+        c = H.login("shortlived", "shortlived-pw"); self.assertTrue(c)
+        st, me = H.json("/api/me", c); self.assertEqual(me["user"], "shortlived")
+        st, j = H.post("/api/users/delete", {"username": "shortlived"}, self.admin); self.assertTrue(j["ok"], j)
+        self.assertEqual(H.get("/api/me", c)[0], 302)                      # the cookie is no longer a session
+        self.assertEqual(H.post("/api/action", {"action": "retry", "kind": "movie", "id": 2}, c)[0], 401)
+
+    def test_a_demotion_reaches_a_session_already_open(self):
+        H.add_user("wasadmin", "wasadmin-pw", role="admin")
+        c = H.login("wasadmin", "wasadmin-pw"); self.assertTrue(c)
+        self.assertEqual(H.json("/api/me", c)[1]["role"], "admin")
+        self.assertEqual(H.get("/api/users", c)[0], 200)                   # an admin-only route, while still an admin
+        st, j = H.post("/api/users", {"username": "wasadmin", "role": "user"}, self.admin); self.assertTrue(j["ok"], j)
+        st, me = H.json("/api/me", c)
+        self.assertEqual(me["role"], "user")
+        self.assertEqual(H.get("/api/users", c)[0], 403)                   # and no longer
+        H.post("/api/users/delete", {"username": "wasadmin"}, self.admin)
+
+
+class TheProfileTitlesAreAddedWith(unittest.TestCase):
+    """The arrs list profiles in id order, so "the first one" is "Any" on a stock install — it allows SDTV and
+    DVD, and an SD rip is then a legal grab for everything the panel adds (docs/CONFIGURATION.md ▸ Settings)."""
+    def setUp(self): self.admin = H.admin_cookie()
+
+    def test_the_setting_round_trips_by_name(self):
+        st, d = H.json("/api/set/sonarr", self.admin)
+        self.assertEqual(d["profiles"], ["Any", "HD-1080p"])
+        st, j = H.post("/api/set/sonarr", dict(d, default_profile="HD-1080p"), self.admin); self.assertTrue(j["ok"], j)
+        with open(os.path.join(H.sb_dir, "settings.local")) as f: self.assertIn("DEFAULT_PROFILE_SONARR=2", f.read())
+        st, d = H.json("/api/set/sonarr", self.admin); self.assertEqual(d["default_profile"], "HD-1080p")
+        st, j = H.post("/api/set/sonarr", dict(d, default_profile="Any"), self.admin); self.assertTrue(j["ok"], j)
+        st, d = H.json("/api/set/sonarr", self.admin); self.assertEqual(d["default_profile"], "Any")
+        st, j = H.post("/api/set/sonarr", dict(d, default_profile="No Such Profile"), self.admin)
+        self.assertTrue(j["ok"], j)                                        # a name the arr does not have leaves it alone
+        self.assertEqual(H.json("/api/set/sonarr", self.admin)[1]["default_profile"], "Any")
+
+    def test_a_title_added_here_gets_that_profile(self):
+        d = H.json("/api/set/sonarr", self.admin)[1]
+        H.post("/api/set/sonarr", dict(d, default_profile="HD-1080p"), self.admin)
+        self.addCleanup(H.post, "/api/set/sonarr", dict(d, default_profile="Any"), self.admin)
+        H.control(clear_calls=True)
+        st, j = H.post("/api/action", {"action": "add", "kind": "tv", "title": "Something New", "tvdbId": 424242}, self.admin)
+        self.assertTrue(j["ok"], j)
+        posted = [b for _, m, p, b in H.calls("sonarr", "POST") if p.endswith("/series")]
+        self.assertEqual([b["qualityProfileId"] for b in posted], [2])
+
+    def test_the_profile_list_is_not_part_of_a_config_snapshot(self):
+        st, ex = H.json("/api/config/export", self.admin)
+        self.assertNotIn("profiles", ex["sonarr"]); self.assertIn("default_profile", ex["sonarr"])
+
+
+class AdoptionSkipsAnEmptiedFolder(unittest.TestCase):
+    """A purge deletes files, not directories. Adopting the folder it left behind re-adds the very title that
+    was purged, with nothing in it (docs/DASHBOARD.md ▸ Library ▸ Import existing files)."""
+    def test_only_the_folder_with_media_is_added(self):
+        admin = H.admin_cookie(); H.control(clear_calls=True)
+        st, j = H.post("/api/action", {"action": "import_library"}, admin); self.assertTrue(j["ok"], j)
+        self.assertIn("'skipped': 1", j["message"])
+        for app, key in (("sonarr", "/series"), ("radarr", "/movie")):
+            posted = [b for _, m, p, b in H.calls(app, "POST") if p.endswith(key)]
+            self.assertEqual([b.get("path", "").rsplit("/", 1)[-1] for b in posted], [fake_stack.ADOPT_NAME], app)
+
+
+class AnEpisodeRowSaysWhatTheFileIs(unittest.TestCase):
+    """The codec is the reason a file plays or transcodes, and the reason a grab was the wrong one. Sonarr reads
+    media info on a scan, so a file it has not scanned yet has a quality name and nothing else — the row shows
+    that difference rather than hiding it (docs/DASHBOARD.md ▸ Library)."""
+    def test_a_scanned_file_carries_its_codecs(self):
+        st, d = H.json("/api/series-tree?seriesId=12", H.admin_cookie())
+        e = next(e for e in d["episodes"] if e["hasFile"])
+        self.assertEqual(e["file"], {"size": 3_000_000_000, "quality": "Bluray-1080p", "video": "x264",
+                                     "audio": "AC3", "channels": "5.1", "resolution": "1920x1080"})
+        self.assertEqual(e["size"], 3_000_000_000)                         # unchanged: the size still stands alone
+
+    def test_an_unscanned_file_carries_the_quality_alone(self):
+        st, d = H.json("/api/series-tree?seriesId=11", H.admin_cookie())
+        e = next(e for e in d["episodes"] if e["hasFile"])
+        self.assertEqual(e["file"]["quality"], "DVD")
+        self.assertEqual((e["file"]["video"], e["file"]["audio"], e["file"]["resolution"]), ("", "", ""))
+
+    def test_an_episode_with_no_file_has_no_facts(self):
+        st, d = H.json("/api/series-tree?seriesId=12", H.admin_cookie())
+        self.assertTrue(all(e["file"] is None for e in d["episodes"] if not e["hasFile"]))
+
+
+class TheGuideOwnsQualityNotThePanel(unittest.TestCase):
+    """Custom formats, their scores, which qualities a profile allows and the per-quality size limits come from
+    TRaSH Guides. The panel previews the difference, writes it on a press, and can put it back
+    (docs/DASHBOARD.md \u25b8 Settings). Two things follow and are asserted here: a save of the Movies or TV group
+    must not touch any of that, and the apply must take a snapshot before it writes."""
+    @classmethod
+    def setUpClass(cls):
+        # its own panel and a clean fake: a sync rewrites profiles and every size limit, which no other test
+        # in this module should have to expect
+        H.control(reset=True); cls.h = harness.Harness().start(); cls.admin = cls.h.admin_cookie()
+    @classmethod
+    def tearDownClass(cls): cls.h.stop(); H.control(reset=True)
+
+    def test_saving_the_tv_group_writes_no_format_no_profile_and_no_size(self):
+        d = self.h.json("/api/set/sonarr", self.admin)[1]
+        for gone in ("size_cap", "size_max", "prefer_h264", "reject_legacy", "allow_unknown"): self.assertNotIn(gone, d)
+        self.h.control(clear_calls=True)
+        st, j = self.h.post("/api/set/sonarr", dict(d, min_seeders=6), self.admin); self.assertTrue(j["ok"], j)
+        self.assertFalse(self.h.calls("sonarr", "POST", "/customformat"))
+        self.assertFalse(self.h.calls("sonarr", "PUT", "/qualitydefinition/"))
+        self.assertFalse(self.h.calls("sonarr", "PUT", "/qualityprofile/"))
+        self.assertTrue(self.h.calls("sonarr", "PUT", "/indexer/"))                    # the seeder threshold is still ours
+
+    def test_the_audio_language_is_offered_for_films_only(self):
+        """Sonarr v4 has no per-profile language; it used to be faked with a custom format that is the guide's now."""
+        self.assertIn("audio_language", self.h.json("/api/set/radarr", self.admin)[1])
+        self.assertNotIn("audio_language", self.h.json("/api/set/sonarr", self.admin)[1])
+
+    def test_the_guide_is_vendored_and_never_fetched_to_show_it(self):
+        st, t = self.h.json("/api/trash", self.admin)
+        self.assertTrue(t["version"]["vendored"]); self.assertTrue(t["version"]["profiles"])
+        self.assertIn("HD Bluray + WEB", [p["name"] for p in t["apps"]["radarr"]["profiles"]])
+        self.assertTrue(all(p["desc"] for p in t["apps"]["sonarr"]["profiles"]))
+
+    def test_a_preview_writes_nothing_and_names_every_change(self):
+        self.h.control(clear_calls=True)
+        # a profile no other test in this class touches, so this one does not depend on running first
+        st, pl = self.h.json("/api/trash/plan?app=radarr&name=UHD%20Bluray%20%2B%20WEB", self.admin)
+        self.assertFalse(pl["empty"]); self.assertFalse(pl["exists"])
+        self.assertTrue(pl["formats"]["create"]); self.assertTrue(pl["sizes"])
+        self.assertTrue(pl["default_profile"]["change"])
+        for method in ("POST", "PUT"):
+            self.assertFalse(self.h.calls("radarr", method, "/customformat"), method)
+            self.assertFalse(self.h.calls("radarr", method, "/qualityprofile"), method)
+            self.assertFalse(self.h.calls("radarr", method, "/qualitydefinition"), method)
+
+    def test_apply_snapshots_first_then_writes_formats_profile_sizes_in_that_order(self):
+        st, pl = self.h.json("/api/trash/plan?app=radarr&name=HD%20Bluray%20%2B%20WEB", self.admin)
+        n_create = len(pl["formats"]["create"])
+        self.h.control(clear_calls=True)
+        st, j = self.h.post("/api/trash/apply", {"app": "radarr", "name": "HD Bluray + WEB"}, self.admin)
+        self.assertTrue(j["ok"], j)
+        self.assertTrue(os.path.exists(os.path.join(self.h.sb_dir, "rollback.json")), "no snapshot was taken before the write")
+        kinds = [mt.group(1) for _, m, p, b in self.h.calls("radarr") if m in ("POST", "PUT")
+                 for mt in [re.search(r"/(customformat|qualityprofile|qualitydefinition)", p)] if mt]
+        self.assertEqual(kinds[:n_create], ["customformat"] * n_create)          # a profile can only score a format that exists
+        self.assertEqual(kinds[n_create], "qualityprofile")
+        self.assertTrue(all(k == "qualitydefinition" for k in kinds[n_create + 1:]), kinds)
+        # the panel keeps one quality setting: which profile a title added here goes on
+        with open(os.path.join(self.h.sb_dir, "settings.local")) as f: loc = f.read()
+        self.assertIn("TRASH_PROFILE_RADARR=HD Bluray + WEB", loc); self.assertIn("DEFAULT_PROFILE_RADARR=", loc)
+        st, t = self.h.json("/api/trash", self.admin)
+        self.assertEqual(t["apps"]["radarr"]["default_profile"], "HD Bluray + WEB")
+        self.assertTrue(t["rollback"]["taken"]); self.assertEqual(t["rollback"]["before"], "radarr \u25b8 HD Bluray + WEB")
+        st, again = self.h.json("/api/trash/plan?app=radarr&name=HD%20Bluray%20%2B%20WEB", self.admin)
+        self.assertTrue(again["empty"], again)                                    # applying twice changes nothing
+
+    def test_rolling_back_restores_the_profiles_and_the_size_limits(self):
+        st, ex0 = self.h.json("/api/config/export", self.admin)
+        before = {p["name"]: p for p in ex0["arr"]["sonarr"]["profiles"]}
+        st, j = self.h.post("/api/trash/apply", {"app": "sonarr", "name": "WEB-1080p"}, self.admin); self.assertTrue(j["ok"], j)
+        st, ex1 = self.h.json("/api/config/export", self.admin)
+        self.assertNotEqual(ex1["arr"]["sonarr"]["quality_definitions"], ex0["arr"]["sonarr"]["quality_definitions"])
+        st, j = self.h.post("/api/trash/rollback", {}, self.admin); self.assertTrue(j["ok"], j)
+        st, ex2 = self.h.json("/api/config/export", self.admin)
+        self.assertEqual(ex2["arr"]["sonarr"]["quality_definitions"], ex0["arr"]["sonarr"]["quality_definitions"])
+        after = {p["name"]: p for p in ex2["arr"]["sonarr"]["profiles"]}
+        for name, p in before.items(): self.assertEqual(after[name], p, name)
+        # the profile the sync created is left in place, not deleted out from under the titles now on it
+        self.assertIn("WEB-1080p", after); self.assertNotIn("WEB-1080p", before)
+
+
+class EveryRowSaysWhichProfileItIsOn(unittest.TestCase):
+    """The profile decides what a title may grab, so it belongs on the title, not two clicks deep in Settings."""
+    def test_the_board_carries_the_profile_name_per_title(self):
+        st, b = H.json("/api/board", H.admin_cookie())
+        # a title Jellyseerr has requested but no arr holds yet is a synthesised row with no profile to name
+        rows = [i for i in b["items"] if isinstance(i.get("id"), int)]
+        self.assertTrue(rows)
+        self.assertTrue(all("profile" in i for i in rows), [i["title"] for i in rows if "profile" not in i])
+        self.assertIn("Any", {i["profile"] for i in rows})

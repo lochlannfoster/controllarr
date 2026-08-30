@@ -70,16 +70,42 @@ class ReadQbit(unittest.TestCase):
 
 class ReadContent(unittest.TestCase):
     def test_radarr_values_are_derived_from_the_app_objects(self):
-        answers = {"/qualitydefinition": [{"preferredSize": 20, "maxSize": 50}],
-                   "/qualityprofile": [{"language": {"name": "Original"}, "formatItems": [{"format": 9, "score": -500}, {"format": 3, "score": -1000}], "items": [{"quality": {"name": "Unknown"}, "allowed": True}]}],
-                   "/customformat": [{"id": 9, "name": "x265-HEVC"}, {"id": 3, "name": "Dubbed-penalty"}],   # the dub penalty is negative too and must not read as "prefer h264"
+        answers = {"/qualityprofile": [{"language": {"name": "Original"}, "formatItems": [{"format": 9, "score": -500}], "items": []}],
                    "/indexer": [{"fields": [{"name": "minimumSeeders", "value": 7}]}],
                    "/config/mediamanagement": {"downloadPropersAndRepacks": "preferAndUpgrade", "copyUsingHardlinks": False, "recycleBinCleanupDays": 3, "minimumFreeSpaceWhenImporting": 500},
                    "/config/naming": {"renameMovies": False}}
         arr = lambda app, path, method="GET", data=None: (200, answers.get(path))
         d = settings_ops.read_content(arr, "radarr")
-        self.assertEqual(d, {"size_cap": 20, "size_max": 50, "audio_language": "Original", "allow_unknown": True, "prefer_h264": True, "min_seeders": 7,
-                             "propers": True, "copy_hardlinks": False, "recycle_bin": "", "recycle_days": 3, "min_free_mb": 500, "rename": False})
+        self.assertEqual(d, {"audio_language": "Original", "min_seeders": 7, "propers": True, "copy_hardlinks": False,
+                             "recycle_bin": "", "recycle_days": 3, "min_free_mb": 500, "rename": False})
+
+    def test_quality_is_not_read_or_written_here_any_more(self):
+        """Sizes, format scores and which qualities a profile allows belong to the guide (app/trash.py +
+        settings_ops.apply_trash). A save of the Movies group must not so much as look at them, or it would
+        quietly undo a sync every time somebody changed the recycle-bin path."""
+        answers = {"/qualityprofile": [{"id": 1, "language": {"id": -1, "name": "Any"}, "formatItems": [], "items": []}],
+                   "/indexer": [], "/config/mediamanagement": {}, "/config/naming": {}}
+        seen = []
+        def arr(app, path, method="GET", data=None):
+            seen.append((method, path)); return (200, answers.get(path))
+        d = settings_ops.read_content(arr, "radarr")
+        for gone in ("size_cap", "size_max", "prefer_h264", "reject_legacy", "allow_unknown"): self.assertNotIn(gone, d)
+        self.assertNotIn(("GET", "/qualitydefinition"), seen)
+        seen.clear()
+        settings_ops.apply_content({"audio_language": "Any", "min_seeders": 5, "propers": True}, arr, apps=("radarr",))
+        self.assertFalse([x for x in seen if x[1].startswith("/qualitydefinition")], seen)
+        self.assertFalse([x for x in seen if x[1].startswith("/customformat")], seen)
+
+    def test_sonarr_has_no_audio_language_to_read_or_write(self):
+        """Sonarr v4 has no per-profile language field. It used to be faked with a custom format; that format is
+        the guide's now, so the setting is offered for films only rather than written into TV's profiles."""
+        seen = []
+        def arr(app, path, method="GET", data=None):
+            seen.append((method, path)); return (200, {"/indexer": [], "/config/mediamanagement": {}, "/config/naming": {}}.get(path))
+        self.assertNotIn("audio_language", settings_ops.read_content(arr, "sonarr"))
+        seen.clear()
+        settings_ops.apply_content({"audio_language": "Original", "min_seeders": 5}, arr, apps=("sonarr",))
+        self.assertFalse([x for x in seen if x[0] == "PUT" and x[1].startswith("/qualityprofile")], seen)
 
 
 if __name__ == "__main__":

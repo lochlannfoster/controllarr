@@ -132,14 +132,13 @@ function drawSpark() {
 }
 // global client controls
 for (const b of $$('[data-global]')) b.addEventListener('click', () => runAction({ confirm: b.dataset.global === 'qall_pause', body: { action: b.dataset.global } }));
-// Tune: the presets (Settings ▸ Presets) one tap away — admin only, confirmed with the preset's own description
+// Tune: the presets (Settings ▸ Presets) one tap away — admin only, confirmed with the preset's own description.
+// They are throughput only: quality is the guide's, and is applied from a diff you have read, never from a menu.
 const tune = $('#tune');
 if (tune && ctx.role === 'admin') (async () => {
   try {
     const ps = await (await fetch('/api/config/presets', { credentials: 'same-origin' })).json();
-    const groups = {};
-    for (const p of ps) (groups[p.group] = groups[p.group] || []).push(p);
-    for (const [g, list] of Object.entries(groups)) tune.append(h('optgroup', { label: g === 'throughput' ? 'Right now' : 'What to look for' }, list.map(p => h('option', { value: p.name }, p.name))));
+    tune.append(h('optgroup', { label: 'Right now' }, ps.map(p => h('option', { value: p.name }, p.name))));
     tune.addEventListener('change', async () => {
       const name = tune.value; tune.value = ''; if (!name) return;
       let c = {}; try { c = await (await fetch('/api/consequence?action=config_preset&name=' + encodeURIComponent(name))).json(); } catch {}

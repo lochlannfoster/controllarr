@@ -57,7 +57,7 @@ class Classification(unittest.TestCase):
         d["releases"]["radarr:3"] = [{"rejected": True, "seeders": 2, "rejections": ["Not enough seeders"]}]
         st, by = self.gen(d); self.assertEqual(by["Coherence"]["reason"], "Only low-seed (max 2)")
         d["releases"]["radarr:3"] = [{"rejected": True, "seeders": 9, "rejections": ["Size 30 GB is larger than maximum allowed"]}]
-        st, by = self.gen(d); self.assertIn("too big for size cap", by["Coherence"]["reason"])
+        st, by = self.gen(d); self.assertIn("too big for the size limit", by["Coherence"]["reason"])
         d["releases"]["radarr:3"] = [{"rejected": False, "seeders": 9, "rejections": []}]
         st, by = self.gen(d); self.assertEqual(by["Coherence"]["stage"], "Searching")
     def test_search_budget_and_cache(self):

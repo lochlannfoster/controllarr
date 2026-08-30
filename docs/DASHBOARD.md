@@ -18,14 +18,17 @@ Related: [INSTALL.md](INSTALL.md) · [CONFIGURATION.md](CONFIGURATION.md) · [TR
 
 **Needs attention** — only actionable problems, each with one primary action; *Nothing needs you* is the good state. Two shortcuts sit in its heading: **Jellyfin ↗** and **Jellyseerr ↗**, the two apps a household opens. In severity order: a tunnel down or its containers orphaned (gluetun installs only); a container stopped, unhealthy or missing (its last log line is in System, `docker logs <name>` has the rest); a stalled download with the reason (*dead swarm — N peers, 0 seeds*, *reported but none reachable*, …) and **Blocklist & retry** / **Remove** / *Reannounce*; an import problem; indexer or FlareSolverr health; disk ≥ 80 / 90 / 95 %; a pending Jellyseerr request (**Approve** / *Decline*); a title unavailable for N days (**Search again**). A source that does not answer gets its own row instead of vanishing.
 
-**Live** — the throughput meter (↓/↑, sparkline, connection state, DHT), **Pause all** (confirmed with real counts), **Resume all**, **Alt-speed**, and **Tune…** (admins: the presets, see [Settings](#settings)). Then every torrent, **labelled by episode** — `S10E03 · title` rather than ten rows all called *Futurama* — with queue number, state, progress, speeds, ETA, seeds/peers, ratio, size, the amber reason when it is not moving, and **Pause / Resume / Recheck / Reannounce / Top / Bottom / Force / Remove / Purge**. *Remove* takes the torrent out of qBittorrent and **keeps the files**; *Purge* deletes the torrent **and its files** — a movie is purged from the whole stack, a TV download also untracks the episodes it carried, and if that was the last of the show the show goes too ([purge](#purging)). Torrents of one title fold into a **group** — collapsed by default to one header with the aggregate (done / downloading, progress, speed, size) that acts on all of them at once (*Pause all*, *Resume all*, *Top*, *Bottom*, *Force all*, *Remove all*, *Purge all*); the caret reveals the episode rows. **Now playing** lists Jellyfin sessions with Direct Play / Direct Stream / Transcode and the reasons.
+**Live** — the throughput meter (↓/↑, sparkline, connection state, DHT), **Pause all** (confirmed with real counts), **Resume all**, **Alt-speed**, and **Tune…** (admins: the presets, see [Settings](#settings)). Then every torrent, **labelled by episode** — `S10E03 · title` rather than ten rows all called *Futurama* — with queue number, state, progress, speeds, ETA, seeds/peers, ratio, size, the amber reason when it is not moving, and **Pause / Resume / Recheck / Reannounce / Top / Bottom / Force / Remove / Purge**. *Remove* takes the torrent out of qBittorrent and **keeps the files**; *Purge* deletes the torrent **and its files** — a movie is purged from the whole stack, a TV download also untracks the episodes it carried, and if that was the last of the show the show goes too ([purge](#purging)). Torrents of one title fold into a **group** — collapsed by default to one header with the aggregate (done / downloading, progress, speed, size) that acts on all of them at once (*Pause all*, *Resume all*, *Top*, *Bottom*, *Force all*, *Remove all*, *Purge all*); the caret reveals the episode rows. **Now playing** lists Jellyfin sessions with Direct Play / Direct Stream / Transcode and the reasons — one row per person per screen, so a client that reconnects and leaves its old session behind for a few minutes is not listed twice.
 
-**Library** — every monitored title by stage; *Available* is two groups, **Available movies** and **Available shows**, each with its own fold, sort and count. While anything is not Available both start collapsed. Filter by text or stage, sort each group. Each row: checkbox, stage, poster, title, subtitle tag, the live download line or the stage detail, **size on disk**, **duration** (a movie's runtime; a show's minutes per episode and the hours on disk), reason, requester. **Tap a movie** to open its controls; **tap a show** to expand it, in one box under the title, into its episode list — `S01E01`, `S01E02`, … under thin season headers that carry the season's episode count and **size**; every tracked season open; a header's caret folds it; tap the title again to collapse everything. Each episode shows its **file size** and a **subs / no subs** word (Bazarr's verdict; nothing until Bazarr has seen the file):
+**Library** — every monitored title by stage; *Available* is two groups, **Available movies** and **Available shows**, each with its own fold, sort and count. While anything is not Available both start collapsed. Filter by text or stage, sort each group. Each row: checkbox, stage, poster, title, subtitle tag, the live download line or the stage detail, **size on disk**, **duration** (a movie's runtime; a show's minutes per episode and the hours on disk), reason, requester. Each row carries its **quality profile** as a small chip beside the title — what that title is allowed to grab — and pressing it changes the profile for that title alone. **Tap a movie** to open its controls; **tap a show** to expand it, in one box under the title, into its episode list — `S01E01`, `S01E02`, … under thin season headers that carry the season's episode count and **size**; every tracked season open; a header's caret folds it; tap the title again to collapse everything. Each episode shows **what its file is** — resolution, video codec, audio codec and channels, read from the media info Sonarr records on a scan; a file it has not scanned yet shows the quality name alone — then its **file size** and a **subs / no subs** word (Bazarr's verdict; nothing until Bazarr has seen the file). A narrow screen drops the codec line to keep the row readable; the episode dialog behind **›** always carries it:
 
 - **Tick episodes** (or a season header, which ticks its episodes; or the show's own checkbox, which ticks every episode — then untick the ones to leave out). A **toolbar appears above the list** for exactly the ticked episodes: **Search**, **Subs** (one episode: pick from Bazarr's candidates; several: Bazarr searches every provider), **Track** / **Untrack**, and for their torrents **Top / Bottom / Pause / Resume / Force / Remove** (keeps files), then **Delete files** and **Purge** (files + torrents, then untracked), **Clear**.
 - A season header also carries its own *tracked* switch (ticking it makes Sonarr search the season).
 - Each episode's **›** opens the **episode dialog** — the same controls for that one episode plus the torrent behind it.
 - **›** on the show's row opens the **title controls** (the drawer), which carries the same episode list under Monitoring.
+- **Import existing files** (in the Library toolbar) scans the movie and TV root folders and adds every folder Radarr and Sonarr do not know yet, without searching for missing episodes, using the profile set in Settings ▸ Quality & size. A folder holding **no media is skipped**, and the result says how many were: a purge deletes files, not directories, so adopting the folder it left behind would re-add the very title that was purged, empty.
+
+What any of this may grab is decided by the title's **quality profile**, which is why every row carries one and the chip changes it for that title alone. What each profile allows, and what it scores, is the guide's — [TRaSH Guides](#trash-guides).
 
 **Multi-select bar** — tick whole titles (a show whose every episode is ticked counts as ticked): **Search…** (one), **Retry**, **Refresh**, **Monitor**, **Unmonitor**, **Blocklist**, **Quality** (one), **Top**, **Bottom**, **Pause**, **Resume**, **Purge** (the whole title), **Clear**. Polling pauses while anything is ticked.
 
@@ -70,7 +73,7 @@ has the real data.
 
 ## Confirmations and logging
 
-Anything destructive opens a dialog whose text **the server writes with the real counts** (with [incognito](#incognito) on it writes the same counts and leaves the names out) — *Purge season 2 of The Expanse: deletes 3 episode files on disk and removes 2 torrents with their data… That is the last of the show: the show itself is removed from Sonarr, Jellyseerr, Bazarr and Jellyfin as well.* — and the toast afterwards says what happened. Every write is one line in the container log (`docker logs controllarr`: user, role, action, target, result, duration).
+Anything destructive opens a dialog whose text **the server writes with the real counts** (with [incognito](#incognito) on it writes the same counts and leaves the names out) — *Purge season 2 of The Expanse: deletes 3 episode files on disk and removes 2 torrents with their data… That is the last of the show: the show itself is removed from Sonarr, Jellyseerr, Bazarr and Jellyfin as well.* — and the toast afterwards says what happened. Every write is one line in the container log (`docker logs controllarr`: user, role, action, target, result, duration) and one entry in **Settings ▸ Action log**, which keeps the newest 2000 of them in the state directory so the record survives the container being recreated. Account and permission changes are in it too. The entries name the **real** target even when [incognito](#incognito) is on — an audit trail of pseudonyms is not an audit trail — and never a key, a password or a session cookie.
 
 ## Settings
 
@@ -78,23 +81,53 @@ Admin only, grouped by what you control. Each group loads the app's **current** 
 
 | Group | Knobs | Writes to |
 |---|---|---|
-| **Presets** | one-click tuning, also in Live's **Tune…** menu. *Right now:* **Everything paused** (stop every download and seed), **Upload off** (no seeding, uploads capped to a trickle), **Balanced** (unlimited down, 1 MB/s up, seed to ratio 2, alt-speed and schedule off, all resumed), **Overclock** (no limits, more seed slots, seed forever, all resumed — the download cap still holds), **Off-peak only** (alternative limits 01–08 h). *What to look for:* **4K quality** (40/120 MB/min, x265 welcome, 3 seeders), **1080p balanced** (20/50, 5 seeders — the installer's default), **Data-saver** (8/20, x264 first, unknown quality allowed). A preset overlays a few values on the current settings; fine-tune in the groups below afterwards. | qBittorrent, Radarr, Sonarr |
+| **Presets** | one-click tuning of **what the box does right now**, also in Live's **Tune…** menu: **Everything paused** (stop every download and seed), **Upload off** (no seeding, uploads capped to a trickle), **Balanced** (unlimited down, 1 MB/s up, seed to ratio 2, alt-speed and schedule off, all resumed), **Overclock** (no limits, more seed slots, seed forever, all resumed — the download cap still holds), **Off-peak only** (alternative limits 01–08 h). A preset overlays a few values on the current settings; fine-tune in the groups below afterwards. What the box *looks for* is not a preset — see **TRaSH Guides** below. | qBittorrent |
 | **Downloads** | download / upload limits, alternative limits + schedule, active downloads (clamped to `MAX_ACTIVE_DL_CAP`) and uploads, seed after complete, stop at ratio, remove once imported; the listen port (read-only, from a gluetun tunnel when there is one); Pause all / Resume all / alt-speed / RSS sync | qBittorrent (+ the arrs' *remove completed*) |
-| **Quality & size → Movies / TV** | preferred + maximum MB/min, the per-indexer release threshold, audio language, unknown quality, prefer h264, propers, rename, hardlinks, recycle bin, minimum free space | Radarr / Sonarr; `SIZE_CAP_MBPM` and `MIN_SEEDERS` into `settings.local` |
+| **Quality & size → TRaSH Guides** | [see below](#trash-guides) — pick a profile, read the diff, apply it | Radarr / Sonarr; `TRASH_PROFILE_*` and `DEFAULT_PROFILE_*` into `settings.local` |
+| **Quality & size → Movies / TV** | the profile titles added here are given, the per-indexer release threshold, audio language (films only — Sonarr v4 profiles have no language field), propers, rename, hardlinks, recycle bin, minimum free space | Radarr / Sonarr; `MIN_SEEDERS`, `DEFAULT_PROFILE_RADARR` and `DEFAULT_PROFILE_SONARR` into `settings.local` |
 | **Indexers** | per-indexer enable / test, **Test all**, sync to the arrs, FlareSolverr status | Prowlarr |
 | **Subtitles** | languages, HI / forced, scores, adaptive search, upgrades, embedded options, providers | Bazarr (a refused save is reported as such — Bazarr 1.6 rejects a profile without `audio_only_include`); `SUBTITLE_LANGS` / `HEARING_IMPAIRED` into `settings.local` |
 | **Requests** | default profile and root folder for new movie / series requests | Jellyseerr (a refused write is reported — its API rejects a body carrying `id`) |
 | **Media server** | Jellyfin key present?; **Scan library now** | Jellyfin |
 | **Notifications** | ntfy URL, topics, quiet hours, **Send a test notification** | `settings.local` (and whatever else on your box reads it) |
 | **Users & roles** | accounts (add, change password, remove — never the last admin); what standard users may do | `users.json` |
-| **Backup & config** | last backup age; save / load a settings snapshot; **Restore installer defaults** | all of the above |
+| **Action log** | every write the panel has made, newest first, filtered by user or by action — when, who, what, the target it acted on, whether it worked and how long it took. Read-only: no undo, nothing to edit, nothing to clear | reads `actions.log` |
+| **Backup & config** | last backup age; the automatic snapshot taken before the last sync and **Roll back**; save / load a settings snapshot; **Restore installer defaults** | all of the above |
 
 **Roles.** Standard users can search, retry, monitor, change quality, fetch subtitles and pause / resume / reorder torrents. Eight grantable permissions: `can_purge` (every purge: title, torrent, season, episode), `can_delete_files`, `can_import`, `can_remove` (remove torrents, blocklist), `can_change_root`, `can_grab`, `can_control_client` (pause/resume all, alt-speed, caps, force-start, RSS sync, indexer tests, Jellyfin scan), `can_manage_requests`. The UI hides what a role cannot do; the server refuses it regardless (`403 Not permitted`).
+
+## TRaSH Guides
+
+Which release groups are worth having, what an upscale is worth, how big a 1080p WEB-DL should be — that is
+[TRaSH Guides'](https://trash-guides.info) answer, not the panel's. **Settings ▸ Quality & size ▸ TRaSH Guides**
+picks one of the guide's quality profiles per app, shows the difference against what Radarr or Sonarr holds
+right now, and writes it when you press **Apply**. It never runs on a schedule and never applies anything you
+have not read.
+
+**What a sync changes.** The custom formats the chosen profile scores (created, or updated in place when the
+guide's pattern has moved on — never duplicated); that profile's allowed qualities, its cutoff, its format
+scores and its score floors, created if the app does not have it; and the **size limit for every quality**,
+which is global to the app. The guide sets a sensible minimum per quality and effectively no maximum: a big
+release is ranked by score now rather than refused for its size. The preview names every one of those changes
+before anything happens, and says so again in the confirmation.
+
+**What stays yours.** Which profile a title added here goes on — ticked by default to follow the sync, and the
+apply fails, loudly, rather than falling back to the app's first profile if the name it needs is missing. Also
+the release threshold, the audio language on films, and everything under *Files*.
+
+**Rolling back.** A settings snapshot is taken automatically before every apply, so **Backup & config ▸ Roll
+back** puts every profile and every size limit back as it found them. A profile the sync *created* is left in
+place rather than deleted out from under the titles now on it, and the result says which.
+
+**The data.** A compiled copy of the guide ships with Controllarr — ten profiles and the custom formats they
+score, per app, with TRaSH's MIT licence beside it ([CONFIGURATION.md ▸ The quality guide](CONFIGURATION.md#the-quality-guide)).
+**Refresh the guide** fetches it again from GitHub; that is the only request Controllarr makes outside your
+network, and only a press makes it.
 
 ## Login and sessions
 
 - `CONTROLLARR_PASSWORD` at install turns auth on and seeds `admin` into `users.json`; from then on `users.json` is the only truth. **Blank = no login and every visitor is an admin** — fine only on a trusted LAN. Never expose `:3002` to the internet — use a private overlay network such as [Tailscale](https://tailscale.com) for remote access.
-- Sessions persist for 30 days in `sessions.json` (cookie `HttpOnly` + `SameSite=Lax`; JSON endpoints require `Content-Type: application/json`), so restarts log nobody out. Deep links survive the login page (`?next=`, local paths only). `/health` is the only unauthenticated route.
+- Sessions persist for 30 days in `sessions.json` (cookie `HttpOnly` + `SameSite=Lax`; JSON endpoints require `Content-Type: application/json`), so restarts log nobody out. Each request checks the session against `users.json`: remove a user and their open sessions end at once, change a role and it applies on the device they were already signed in on — neither waits for the cookie to expire. Deep links survive the login page (`?next=`, local paths only). `/health` is the only unauthenticated route.
 - Locked out: [TROUBLESHOOTING.md](TROUBLESHOOTING.md#signing-in).
 
 ## Phone, keyboard, themes
@@ -107,4 +140,4 @@ A purge removes a title from every app at once: each of its downloads (running o
 
 ## Files
 
-Everything Controllarr writes — `users.json`, `sessions.json`, `settings.local`, `cache/` and `controllarr.env` — lives in its own state directory ([CONFIGURATION.md](CONFIGURATION.md)). Your apps' config, your media and the Docker socket are mounted read-only when at all. Colours, type and spacing are the tokens in `app/static/tokens.css`.
+Everything Controllarr writes — `users.json`, `sessions.json`, `settings.local`, `actions.log`, `cache/` and `controllarr.env` — lives in its own state directory ([CONFIGURATION.md](CONFIGURATION.md)). Your apps' config, your media and the Docker socket are mounted read-only when at all. Colours, type and spacing are the tokens in `app/static/tokens.css`.

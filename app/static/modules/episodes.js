@@ -23,6 +23,18 @@ const tip = k => TIP[k] || null;
 const epCode = e => `S${String(e.season).padStart(2, '0')}E${String(e.ep || 0).padStart(2, '0')}`;
 const showName = item => incog.mask(item.title, 'tv:' + item.id);            // the show, as this module prints it
 const epName = (item, e) => incog.mask(e.title, `ep:${item.id}:${e.id}`);    // one pseudonym per episode, stable
+// What the file on disk actually IS. Sonarr reads media info on a scan, so a file it has not scanned yet has a
+// quality name and nothing else — showing that beats showing nothing, and the two look different on purpose.
+const shortRes = r => { const m = /x(\d+)$/.exec(r || ''); return m ? m[1] + 'p' : ''; };
+const fileFacts = e => {
+  const f = e.file; if (!f) return null;
+  const parts = [shortRes(f.resolution) || f.quality, f.video, f.audio ? f.audio + (f.channels ? ' ' + f.channels : '') : ''].filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+};
+const fileTip = e => {
+  const f = e.file || {};
+  return ['Quality ' + (f.quality || 'unknown'), f.resolution, f.video && ('video ' + f.video), f.audio && ('audio ' + f.audio + (f.channels ? ' ' + f.channels : ''))].filter(Boolean).join(' · ');
+};
 const torState = t => !t ? null : /stalled|metaDL/.test(t.state) && t.progress < 100 ? pill('danger', 'stalled', 'pill-sm') : t.progress >= 100 ? pill('ok', 'downloaded', 'pill-sm') : pill('flow', `${t.progress ?? 0} %`, 'pill-sm');
 // the subtitle word for an episode on disk: Bazarr's verdict, or nothing while Bazarr has not seen the file
 const subState = e => !e.hasFile || e.sub == null ? null : e.sub ? pill('ok', 'subs', 'pill-sm') : pill('warn', 'no subs', 'pill-sm');
@@ -73,6 +85,7 @@ export function createEpisodes(ctx, { releasePicker }) {
           for (const e of eps) list.append(h('div', { class: 'ep' + (e.monitored ? '' : ' ep-off') + (st.sel.has(e.id) ? ' ep-on' : '') },
             h('input', { type: 'checkbox', class: 'ep-sel', checked: st.sel.has(e.id), 'aria-label': `Tick ${epCode(e)}`, title: tip('ep_tick'), onchange: ev => { ev.target.checked ? st.sel.add(e.id) : st.sel.delete(e.id); draw(); notify(st); } }),
             h('span', { class: 'mono ep-code' }, epCode(e)), h('span', { class: 'ep-title ell' }, e.title ? epName(item, e) : ''),
+            fileFacts(e) ? h('span', { class: 'mono muted ep-facts' }, h('span', { title: fileTip(e) }, fileFacts(e))) : null,
             e.size ? h('span', { class: 'mono muted ep-size', title: 'Size of the file on disk' }, fmt.bytes(e.size)) : null,
             e.torrent ? torState(e.torrent) : e.hasFile ? pill('ok', 'file', 'pill-sm') : pill('muted', e.monitored ? 'missing' : 'ignored', 'pill-sm'),
             subState(e),
@@ -122,7 +135,7 @@ export function createEpisodes(ctx, { releasePicker }) {
     const tb = (a, l, extra, confirm, cls = 'btn btn-sm', cap = '') => h('button', { type: 'button', class: cls, title: tip(a), dataset: { cap }, onclick: async () => { const j = await tAct(a, cur.torrent.hash, item, extra || {}, confirm); if (j !== false) { ctx.refresh('live', 'board'); refresh(); } } }, l);
     function draw() {
       const t = cur.torrent; clear(body);
-      body.append(h('div', { class: 'dwrow' }, cur.hasFile ? pill('ok', 'file on disk') : pill('muted', 'no file'), cur.size ? h('span', { class: 'mono muted' }, fmt.bytes(cur.size)) : null, subState(cur), cur.monitored ? pill('flow', 'tracked') : pill('muted', 'not tracked'), t ? torState(t) : null, cur.airDate ? h('span', { class: 'mono muted' }, 'aired ' + cur.airDate) : null),
+      body.append(h('div', { class: 'dwrow' }, cur.hasFile ? pill('ok', 'file on disk') : pill('muted', 'no file'), cur.size ? h('span', { class: 'mono muted' }, fmt.bytes(cur.size)) : null, fileFacts(cur) ? h('span', { class: 'mono muted', title: fileTip(cur) }, fileFacts(cur)) : null, subState(cur), cur.monitored ? pill('flow', 'tracked') : pill('muted', 'not tracked'), t ? torState(t) : null, cur.airDate ? h('span', { class: 'mono muted' }, 'aired ' + cur.airDate) : null),
         h('section', { class: 'dwsec' }, h('h4', {}, 'Episode'), h('div', { class: 'dwbtns' },
           h('label', { class: 'btn', title: tip('episode_monitor') }, h('input', { type: 'checkbox', checked: !!cur.monitored, onchange: e => run({ action: 'episode_monitor', episodeId: cur.id, monitored: e.target.checked }) }), ' Track'),
           h('button', { type: 'button', class: 'btn', title: tip('episode_search'), onclick: () => run({ action: 'episode_search', episodeId: cur.id }) }, 'Search'),

@@ -7,7 +7,7 @@ services listed in the config file, wherever they live. Optional password gate (
 with persisted sessions. docs/DASHBOARD.md explains operating it."""
 import hashlib, html, http.cookiejar, json, os, re, secrets as _secrets, threading, time, urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import board_gen, settings_ops, library_import, panel_data
+import action_log, board_gen, settings_ops, library_import, panel_data, trash
 from services import http as H, apikey, E, CONFIG_DIR, redact, add_secret, config_problems
 
 PORT = int(os.environ.get("CONTROLLARR_PORT", "3002"))
@@ -159,6 +159,12 @@ def _own_like_dir(path):
         st = os.stat(os.path.dirname(path) or ".")
         if os.geteuid() == 0 and (st.st_uid, st.st_gid) != (0, 0): os.chown(path, st.st_uid, st.st_gid)
     except Exception: pass
+# The durable action log (action_log): the same line do_action prints, kept in a bounded ring beside the
+# panel's other state so recreating the container does not take the record with it.
+action_log.configure(os.path.join(SB_DIR, "actions.log"), _own_like_dir)
+# The TRaSH guide data: vendored in app/trash-guides/, and a refreshed copy here once someone presses Refresh.
+trash.configure(SB_DIR)
+ROLLBACK = os.path.join(SB_DIR, "rollback.json")   # the settings snapshot taken automatically before a sync
 def _write_users(d):
     tmp = USERS_FILE + ".tmp"
     with open(tmp, "w") as f: json.dump(d, f, indent=2)
@@ -166,8 +172,16 @@ def _write_users(d):
     try: os.chmod(USERS_FILE, 0o600)
     except Exception: pass
     _own_like_dir(USERS_FILE)
+_USERS_CACHE = {"ts": 0.0, "d": None}   # _session checks the store on every request; a few seconds of cache keeps that off the disk
 def save_users(d):
     with _USERS_LOCK: _write_users(d)
+    _USERS_CACHE["ts"] = 0.0            # a change made in Settings takes effect on the very next request
+def users_snapshot():
+    """load_users() behind a short TTL, for the per-request session check."""
+    now = time.time()
+    if _USERS_CACHE["d"] is None or now - _USERS_CACHE["ts"] > 5:
+        _USERS_CACHE["d"] = load_users(); _USERS_CACHE["ts"] = now
+    return _USERS_CACHE["d"]
 
 def authenticate(username, password):
     """Return the user's role on success, else None. Falls back to the legacy single password as admin."""
@@ -363,6 +377,17 @@ def write_local(updates):
     try: os.chmod(LOCAL, 0o600)                              # it carries the ntfy URL, which can carry a token
     except Exception: pass
     _own_like_dir(LOCAL)
+
+# ---------------- the quality profile the panel adds with ----------------
+def _default_profile(app):
+    """Radarr and Sonarr list profiles in id order, so the first one is "Any" on a stock install — it allows SDTV and
+    DVD, and an SD XviD rip is then a legal grab for every title the panel adds or adopts. Which profile to use is the
+    owner's choice: DEFAULT_PROFILE_RADARR / DEFAULT_PROFILE_SONARR in settings.local, set from Settings. Unset (or an
+    id that profile no longer has) falls back to the arr's first profile, which is what this did before the setting."""
+    ids = [p.get("id") for p in (arr(app, "/qualityprofile")[1] or []) if isinstance(p, dict)]
+    try: want = int(read_local().get(f"DEFAULT_PROFILE_{app.upper()}", "") or 0)
+    except Exception: want = 0
+    return want if want in ids else (ids[0] if ids else None)
 
 # ---------------- live data (background regeneration) ----------------
 _LOCK = threading.Lock()
@@ -612,6 +637,17 @@ def _episode_subs(sid):
         if eid is not None: out[eid] = not (r.get("missing_subtitles") or [])
     if data is not None: _EPSUBS[sid] = (time.time(), out)
     return out
+def _file_facts(f):
+    """What an episode file actually IS, for the row that lists it: the quality Sonarr filed it under and the codecs,
+    resolution and size its media info reports. Sonarr reads media info on a scan, so a file it has not scanned yet
+    carries the quality alone — which is the difference between "not scanned" and "not there"."""
+    mi = f.get("mediaInfo") or {}
+    ch = mi.get("audioChannels")
+    return {"size": f.get("size") or 0,
+            "quality": ((f.get("quality") or {}).get("quality") or {}).get("name") or "",
+            "video": mi.get("videoCodec") or "", "audio": mi.get("audioCodec") or "",
+            "channels": (f"{ch:g}" if isinstance(ch, (int, float)) and ch else ""),
+            "resolution": mi.get("resolution") or ""}
 def series_tree(sid):
     """Seasons + episodes of a show with the torrent (if any) behind each episode, the file's size and its subtitle
     status: the inline season list under a Library row, the drawer's Monitoring section and the episode dialog all
@@ -620,7 +656,7 @@ def series_tree(sid):
     if not isinstance(obj, dict): return None
     st, eps = arr("sonarr", f"/episode?seriesId={sid}"); eps = eps if isinstance(eps, list) else []
     st, files = arr("sonarr", f"/episodefile?seriesId={sid}")
-    fsize = {f.get("id"): f.get("size") or 0 for f in (files if isinstance(files, list) else [])}
+    finfo = {f.get("id"): _file_facts(f) for f in (files if isinstance(files, list) else [])}
     subs = _episode_subs(sid)
     qi = queue_index(); live, _ = _qbit_live(); by_ep = {}
     for h, q in qi.items():
@@ -631,7 +667,8 @@ def series_tree(sid):
                                              "eta": _eta(t.get("eta")) if t else "", "why": _why(t) if t else "", "dlspeed": t.get("dlspeed", 0), "force_start": bool(t.get("force_start"))}
     out_eps = [{"id": e.get("id"), "season": e.get("seasonNumber"), "ep": e.get("episodeNumber"), "title": e.get("title"), "monitored": e.get("monitored"),
                 "hasFile": e.get("hasFile"), "airDate": e.get("airDate"), "episodeFileId": e.get("episodeFileId"), "torrent": by_ep.get(e.get("id")),
-                "size": (fsize.get(e.get("episodeFileId")) or 0) if e.get("hasFile") else 0,
+                "size": (finfo.get(e.get("episodeFileId")) or {}).get("size", 0) if e.get("hasFile") else 0,
+                "file": finfo.get(e.get("episodeFileId")) if e.get("hasFile") else None,
                 "sub": subs.get(e.get("id")) if e.get("hasFile") else None}   # None: no file yet, or Bazarr has not seen it
                for e in sorted(eps, key=lambda e: (e.get("seasonNumber") or 0, e.get("episodeNumber") or 0)) if e.get("seasonNumber") is not None]
     seasons = []
@@ -736,7 +773,8 @@ def _purge_tv_scope(scope, sid, season=None):
             arr("sonarr", f"/series/{sid}", "PUT", obj)
     st, eps = arr("sonarr", f"/episode?seriesId={sid}")
     gone = False
-    if isinstance(eps, list) and eps and not any(e.get("hasFile") or e.get("monitored") for e in eps):
+    # `eps` empty is only "nothing left" when Sonarr actually answered; on a failed call it means "no idea"
+    if _ok(st) and isinstance(eps, list) and not any(e.get("hasFile") or e.get("monitored") for e in eps):
         gone, _ = _purge_item("tv", sid)
     else:
         _after_delete("tv")
@@ -753,16 +791,16 @@ def _pin(hashes, on):
     """Tag torrents 'pinned' so queue-optimizer leaves a manual Top alone (Bottom un-pins)."""
     if hashes: _qbit_raw("torrents/" + ("addTags" if on else "removeTags"), {"hashes": "|".join(hashes), "tags": "pinned"})
 def do_action(a, sess=None):
-    """Every write goes through here. One log line per call (user, action, target, result, ms) to stdout —
-    `docker logs controllarr` has it; no new files."""
+    """Every write goes through here. One entry per call (user, role, action, target, result, ms) — printed
+    to stdout for `docker logs controllarr` and kept in the panel's own ring, action_log."""
     t0 = time.time(); action = a.get("action")
     try:
         ok, msg = _do_action(a, sess)
     except Exception as e:
         ok, msg = False, f"{action} failed: {redact(e)[:120]}"
-    who = (sess or {}).get("user", "-"); role = (sess or {}).get("role", "-")
     tgt = a.get("hash") or (f"{a.get('kind')}:{a.get('id')}" if a.get("id") is not None else a.get("reqId") or "-")
-    print(f"action user={who} role={role} action={action} target={tgt} result={'ok' if ok else 'fail'} ms={round((time.time() - t0) * 1000)} msg={json.dumps(redact(msg)[:100])}", flush=True)
+    action_log.record("action", (sess or {}).get("user", "-"), (sess or {}).get("role", "-"), action, tgt, ok,
+                      ms=round((time.time() - t0) * 1000), msg=msg)
     return ok, msg
 def _do_action(a, sess=None):
     action = a.get("action"); kind = a.get("kind"); aid = a.get("id")
@@ -982,7 +1020,7 @@ def _do_action(a, sess=None):
     # --- add ---
     if action == "add":
         root = (arr(app, "/rootfolder")[1] or [{}])[0].get("path")
-        qp = (arr(app, "/qualityprofile")[1] or [{}])[0].get("id")
+        qp = _default_profile(app)
         if kind == "movie":
             arr("radarr", "/movie", "POST", {"title": a["title"], "tmdbId": a["tmdbId"], "year": a.get("year"),
                 "qualityProfileId": qp, "rootFolderPath": root, "monitored": True, "minimumAvailability": "released",
@@ -993,7 +1031,7 @@ def _do_action(a, sess=None):
                 "addOptions": {"searchForMissingEpisodes": True, "monitor": "all"}})
         _WAKE.set(); return True, f"Added {a.get('title')}"
     if action == "import_library":
-        res = library_import.import_existing(arr); _WAKE.set()
+        res = library_import.import_existing(arr, profiles={a: _default_profile(a) for a in ("radarr", "sonarr")}); _WAKE.set()
         return True, f"Imported movies {res.get('movies')}, series {res.get('series')}"
     return False, "unknown action"
 
@@ -1044,7 +1082,14 @@ def apply_jellyseerr(f):
         if not _ok(st): return False, f"Jellyseerr refused the {kind} defaults ({st}): {str((r or {}).get('message', r))[:120]}"
     _WAKE.set(); return True, "Jellyseerr defaults saved"
 def read_tab(tab):
-    if tab in ("radarr", "sonarr"): return settings_ops.read_content(arr, tab)
+    if tab in ("radarr", "sonarr"):
+        d = settings_ops.read_content(arr, tab)
+        # not settings_ops keys: the arrs have no "profile to add with" of their own, this is the panel's own choice
+        profs = [p for p in (arr(tab, "/qualityprofile")[1] or []) if isinstance(p, dict)]
+        d["profiles"] = [p.get("name") for p in profs]
+        pid = _default_profile(tab)
+        d["default_profile"] = next((p.get("name") for p in profs if p.get("id") == pid), "")
+        return d
     if tab == "qbit":
         d = settings_ops.read_qbit(qbit)
         try:
@@ -1076,11 +1121,13 @@ def apply_tab(tab, f):
     global MIN_SEEDERS
     lg = lambda m: print(f"set/{tab}:", m, flush=True)
     if tab in ("radarr", "sonarr"):
-        content = {"size_cap": f.get("size_cap"), "size_max": f.get("size_max"), "min_seeders": f.get("min_seeders"),
-                   "audio_language": f.get("audio_language", "Any"), "allow_unknown": _bool(f.get("allow_unknown")),
-                   "prefer_h264": _bool(f.get("prefer_h264")), "propers": _bool(f.get("propers")), "rename": _bool(f.get("rename")),
+        # quality itself is not in here any more: profiles, format scores and per-quality size limits belong to
+        # the guide (Quality & size ▸ TRaSH Guides), and a save of this group must not undo a sync
+        content = {"min_seeders": f.get("min_seeders"),
+                   "propers": _bool(f.get("propers")), "rename": _bool(f.get("rename")),
                    "copy_hardlinks": _bool(f.get("copy_hardlinks")), "recycle_bin": f.get("recycle_bin", ""),
                    "recycle_days": f.get("recycle_days") or 0, "min_free_mb": f.get("min_free_mb") or 100}
+        if tab == "radarr": content["audio_language"] = f.get("audio_language", "Any")
         errs = settings_ops.apply_content(content, arr, apps=(tab,), log=lg)
         # Prowlarr's application sync writes ITS app profile's minimumSeeders back into both arrs, undoing the value
         # above within minutes — the profile has to agree (on the box it had drifted from the installed 5 to 1)
@@ -1091,13 +1138,18 @@ def apply_tab(tab, f):
                     if isinstance(p, dict) and p.get("id") is not None and p.get("minimumSeeders") != n:
                         p["minimumSeeders"] = n; prowlarr(f"/appprofile/{p['id']}", "PUT", p)
         except Exception as e: lg(f"prowlarr app profile not updated: {e}")
+        if f.get("default_profile") not in (None, ""):
+            # the setting travels as the profile's NAME: a snapshot taken on one box means the same thing on another,
+            # and the confirmation dialog reads "Any → HD-1080p" rather than "1 → 4"
+            want = str(f["default_profile"])
+            pid = next((p.get("id") for p in (arr(tab, "/qualityprofile")[1] or [])
+                        if isinstance(p, dict) and p.get("name") == want), None)
+            if pid is None: lg(f"no profile named {want!r}; left unchanged")
+            else: write_local({f"DEFAULT_PROFILE_{tab.upper()}": int(pid)})
         # keep the library classifier — and anything else on the box that reads settings.local — in step
         try:
-            upd = {}
-            if f.get("size_cap") not in (None, ""): upd["SIZE_CAP_MBPM"] = int(float(f.get("size_cap")))
             if f.get("min_seeders") not in (None, ""):
-                MIN_SEEDERS = int(float(f.get("min_seeders"))); upd["MIN_SEEDERS"] = MIN_SEEDERS
-            if upd: write_local(upd)
+                MIN_SEEDERS = int(float(f.get("min_seeders"))); write_local({"MIN_SEEDERS": MIN_SEEDERS})
         except Exception: pass
         _WAKE.set()
         if errs: return False, f"{tab.title()}: {'; '.join(errs)[:200]}"
@@ -1144,12 +1196,12 @@ def ntfy_test():
 
 # ---- config snapshot / presets (per app, through the same read/apply path as the tabs) ----
 _SNAP_TABS = ("radarr", "sonarr", "qbit", "bazarr", "notify")
-_SNAP_SKIP = {"providers", "cap",   # derived / read-only keys, not settings
+_SNAP_SKIP = {"providers", "cap", "profiles",   # derived / read-only keys, not settings
                "ntfy_url"}          # a credential (a token can be in the URL); a snapshot is made to be shared
-_ARR_DEF = {"size_cap": 20, "size_max": 50, "min_seeders": 5, "audio_language": "Original", "allow_unknown": False,
-            "prefer_h264": False, "propers": True, "rename": True, "copy_hardlinks": True, "recycle_days": 7, "min_free_mb": 1000}
+_ARR_DEF = {"min_seeders": 5, "propers": True, "rename": True, "copy_hardlinks": True,
+            "recycle_days": 7, "min_free_mb": 1000}
 DEFAULTS = {   # sensible baseline = the installer's defaults (the download guardrail is respected)
-    "radarr": dict(_ARR_DEF), "sonarr": dict(_ARR_DEF),
+    "radarr": dict(_ARR_DEF, audio_language="Original"), "sonarr": dict(_ARR_DEF),
     "qbit":   {"dl_limit": 0, "up_limit": 0, "alt_dl_limit": 0, "alt_up_limit": 0, "sched_from": 8, "sched_to": 23,
                "max_active_downloads": MAX_ACTIVE_DL_CAP, "max_active_uploads": 3, "max_ratio": 0, "scheduler_enabled": False,
                "seed_after_complete": True, "remove_completed": False},
@@ -1158,12 +1210,12 @@ DEFAULTS = {   # sensible baseline = the installer's defaults (the download guar
                "embedded_subs_show_desired": True, "ignore_pgs_subs": False, "ignore_vobsub_subs": False},
     "notify": {"quiet_start": 0, "quiet_end": 9, "topic_media": "media", "topic_admin": "admin"},
 }
-def _both(d): return {"radarr": dict(d), "sonarr": dict(d)}
 _FULL = {"dl_limit": 0, "up_limit": 0, "alt_dl_limit": 0, "alt_up_limit": 0, "scheduler_enabled": False, "max_active_downloads": MAX_ACTIVE_DL_CAP,
          "seed_after_complete": True}
 # One-click tuning. Each preset is a partial overlay per app (merged onto the CURRENT values, then applied through the
-# same path as the Settings groups) plus optional actions run afterwards. `group` orders the Settings page and the
-# dashboard's Tune menu: throughput presets change what the box does right now, quality presets what it looks for.
+# same path as the Settings groups) plus optional actions run afterwards. They are throughput only: what the box does
+# right now. What it *looks for* is quality correctness, which is the guide's — Quality & size ▸ TRaSH Guides, where
+# the change is previewed in full before anything is written, not applied from a one-line description.
 PRESETS = {
     "Everything paused": {"group": "throughput", "desc": "Stops every download and every seed until you resume. The box goes quiet.",
                           "actions": ["qall_pause"]},
@@ -1175,12 +1227,6 @@ PRESETS = {
                           "qbit": dict(_FULL, max_active_uploads=max(8, MAX_ACTIVE_DL_CAP * 3), max_ratio=0), "actions": ["alt_off", "qall_resume"]},
     "Off-peak only":     {"group": "throughput", "desc": "Use the alternative limits (Downloads ▸ Alternative speed) from 01:00 to 08:00 — full speed only at night.",
                           "qbit": {"scheduler_enabled": True, "sched_from": 1, "sched_to": 8}},
-    "4K quality":        {"group": "quality", "desc": "Prefer 40 MB/min, allow up to 120 MB/min, x265 welcome, 3 seeders is enough. Big files, best picture.",
-                          **_both({"size_cap": 40, "size_max": 120, "prefer_h264": False, "allow_unknown": False, "min_seeders": 3})},
-    "1080p balanced":    {"group": "quality", "desc": "Prefer 20 MB/min, allow up to 50, at least 5 seeders. The installer's default.",
-                          **_both({"size_cap": 20, "size_max": 50,  "prefer_h264": False, "allow_unknown": False, "min_seeders": 5})},
-    "Data-saver":        {"group": "quality", "desc": "Prefer 8 MB/min, allow up to 20, x264 first (cheap to decode), unknown-quality releases allowed. Smallest files that still play.",
-                          **_both({"size_cap": 8,  "size_max": 20,  "prefer_h264": True,  "allow_unknown": True,  "min_seeders": 5})},
 }
 def preset_list(): return [{"name": n, "desc": p.get("desc", ""), "group": p.get("group", "quality")} for n, p in PRESETS.items()]
 def export_config():
@@ -1188,6 +1234,14 @@ def export_config():
     for t in _SNAP_TABS:
         try: out[t] = {k: v for k, v in read_tab(t).items() if k not in _SNAP_SKIP}
         except Exception as e: out[t] = {"_error": str(e)}
+    # What the guide owns — every quality profile's allowed qualities, format scores, cutoff and score floors,
+    # plus the global per-quality size limits — keyed by name so the snapshot still means something on another
+    # box. It belongs here and not in a file of its own: a snapshot that cannot undo a TRaSH sync is no longer
+    # a snapshot of the settings, and the rollback is this snapshot taken automatically (`_write_rollback`).
+    out["arr"] = {}
+    for app in ("radarr", "sonarr"):
+        try: out["arr"][app] = settings_ops.arr_state(arr, app)
+        except Exception as e: out["arr"][app] = {"_error": str(e)}
     return out
 _PRESET_ACTIONS = {"qall_pause": {"action": "qall_pause"}, "qall_resume": {"action": "qall_resume"}, "alt_off": {"action": "alt_set", "value": False}}
 def apply_config(cfg):
@@ -1200,11 +1254,82 @@ def apply_config(cfg):
         cur = {k: v for k, v in read_tab(t).items() if k not in _SNAP_SKIP}
         cur.update({k: v for k, v in part.items() if not str(k).startswith("_")})
         ok, msg = apply_tab(t, cur); ok_all = ok_all and ok; msgs.append(f"{t}: {msg}")
+    # last, because the snapshot's per-profile record is the more precise one: a group above sets the audio
+    # language across every profile, this puts each profile back exactly as it was
+    for app, state in sorted(((cfg or {}).get("arr") or {}).items()):
+        if app not in ("radarr", "sonarr") or not isinstance(state, dict) or state.get("_error"): continue
+        errs, extra = settings_ops.apply_arr_state(state, arr, app, log=lambda m: print("restore:", m, flush=True))
+        ok_all = ok_all and not errs
+        msgs.append(f"{app}: {len(state.get('profiles', []))} profiles restored"
+                    + (f" ({'; '.join(errs)[:120]})" if errs else "")
+                    + (f"; left alone: {', '.join(x for x in extra if x)}" if extra else ""))
     for name in (cfg or {}).get("actions") or []:
         body = _PRESET_ACTIONS.get(name)
         if not body: continue
         ok, msg = do_action(dict(body), None); ok_all = ok_all and ok; msgs.append(str(msg))
     return ok_all, ("; ".join(msgs) if msgs else "nothing to apply")
+
+# ---- TRaSH Guides sync: preview, apply, roll back, refresh (app/trash.py holds the data and the diff) ----
+def _profile_name(app):
+    """The name of the profile this arr adds titles with — the one setting in here that stays the panel's."""
+    pid = _default_profile(app)
+    return next((p.get("name") for p in (arr(app, "/qualityprofile")[1] or [])
+                 if isinstance(p, dict) and p.get("id") == pid), "")
+def trash_state():
+    """What the group shows before a profile is chosen: where the data came from, what is on offer per app,
+    which profile each arr adds with, and whether there is a snapshot to roll back to."""
+    svcs = SERVICES(); out = {"version": trash.version(), "apps": {}, "rollback": rollback_info()}
+    for app in ("radarr", "sonarr"):
+        if svcs and app not in svcs: continue
+        try: profs = trash.profiles(app)
+        except Exception as e: out["apps"][app] = {"error": str(e)}; continue
+        out["apps"][app] = {"profiles": profs, "default_profile": _profile_name(app),
+                            "synced": read_local().get(f"TRASH_PROFILE_{app.upper()}", "")}
+    return out
+def trash_plan(app, name):
+    if app not in ("radarr", "sonarr"): return {"error": "unknown app"}
+    return trash.plan(app, name, arr, _profile_name(app))
+def _write_rollback(note):
+    """The settings snapshot Backup & config already offers, taken automatically and kept on disk, so a sync
+    is undone with the mechanism that exists rather than a second one invented beside it."""
+    snap = export_config(); snap["_taken"] = int(time.time()); snap["_before"] = note
+    tmp = ROLLBACK + ".tmp"
+    with open(tmp, "w") as f: json.dump(snap, f)
+    os.chmod(tmp, 0o600); os.replace(tmp, ROLLBACK); _own_like_dir(ROLLBACK)
+    return snap
+def rollback_info():
+    try:
+        with open(ROLLBACK) as f: d = json.load(f)
+        return {"taken": d.get("_taken"), "before": d.get("_before", "")}
+    except Exception: return {}
+def trash_apply(app, name, repoint=True):
+    """Take the snapshot, write the plan, then re-point the profile titles are added with. Nothing here runs
+    on a timer and nothing calls it but a person pressing Apply on a diff they have just read."""
+    pl = trash_plan(app, name)
+    if pl.get("error"): return False, pl["error"]
+    _write_rollback(f"{app} ▸ {name}")
+    errs = settings_ops.apply_trash(pl, arr, log=lambda m: print("trash:", m, flush=True))
+    if repoint:
+        pid = next((p.get("id") for p in (arr(app, "/qualityprofile")[1] or [])
+                    if isinstance(p, dict) and p.get("name") == name), None)
+        # never quietly fall back to the arr's first profile — that is "Any" on a stock install, and an SD rip
+        # would become a legal grab for everything added from here
+        if pid is None: errs.append(f"no profile named {name!r} after the sync, so the profile titles are added with is unchanged")
+        else: write_local({f"DEFAULT_PROFILE_{app.upper()}": int(pid)})
+    write_local({f"TRASH_PROFILE_{app.upper()}": name})
+    _WAKE.set()
+    if errs: return False, f"{app.title()}: {'; '.join(errs)[:240]}"
+    return True, (f"{name} applied to {app.title()} — {pl['formats']['total']} custom formats, "
+                  f"{len(pl['sizes'])} size limits. Roll back under Backup & config.")
+def trash_rollback():
+    try:
+        with open(ROLLBACK) as f: snap = json.load(f)
+    except Exception: return False, "No automatic snapshot to roll back to — one is taken before every sync."
+    ok, msg = apply_config(snap); _WAKE.set()
+    return ok, f"Rolled back to the snapshot taken before {snap.get('_before') or 'the last sync'} — {msg}"
+def trash_refresh():
+    ok, msg = trash.refresh(_own_like_dir)
+    return ok, msg
 def consequence_local(a):
     """Confirmation text for the actions the app itself resolves (the arr-aware purges and presets); None hands the
     rest to panel_data.Panel.consequence."""
@@ -1250,7 +1375,7 @@ def board_json():
     _LIVE, (gdl, gup) = _qbit_live()
     d = status(); sm = sub_map(); out = []
     for i in d.get("items", []):
-        it = {k: i.get(k) for k in ("kind", "id", "title", "year", "stage", "reason", "detail", "who", "size", "runtime", "have", "total", "tmdbId", "tvdbId")}
+        it = {k: i.get(k) for k in ("kind", "id", "title", "year", "stage", "reason", "detail", "who", "size", "runtime", "have", "total", "tmdbId", "tvdbId", "profile")}
         it["poster"] = f"/img/poster/{i.get('kind')}/{i.get('id')}" if i.get("poster") and isinstance(i.get("id"), int) else None
         ts = [_LIVE[h] for h in (i.get("hashes") or []) if h in _LIVE]
         if ts:
@@ -1287,14 +1412,27 @@ def main_page(sess):
 
 
 # ---------------- HTTP ----------------
+def _live_session(tok, s):
+    """A session is only as good as the account behind it. The cookie lasts 30 days, so without this check a user
+    deleted in Settings keeps every permission they had until it expires, and a demoted admin stays an admin on the
+    device they were already signed in on. The role is re-read from the store rather than trusted from the cookie."""
+    users = users_snapshot().get("users", {})
+    if not users: return s                       # legacy single-password login: no account store to check against
+    u = users.get(s.get("user"))
+    if not u:                                    # the account is gone, and so is the session issued for it
+        SESSIONS.pop(tok, None); _save_sessions(); return None
+    role = u.get("role", "user")
+    if role != s.get("role"): s["role"] = role; _save_sessions()
+    return s
 def _session(handler):
     """Return the session record {user, role} for this request, or None."""
     if not PASSWORD: return {"user": "guest", "role": "admin"}   # auth disabled → open (full access)
     c = handler.headers.get("Cookie", "")
     for part in c.split(";"):
         if part.strip().startswith("sb="):
-            s = SESSIONS.get(part.strip()[3:])
-            return s if s and s.get("exp", 0) > time.time() else None
+            tok = part.strip()[3:]; s = SESSIONS.get(tok)
+            if not (s and s.get("exp", 0) > time.time()): return None
+            return _live_session(tok, s)
     return None
 def _authed(handler): return _session(handler) is not None
 def _is_admin(handler):
@@ -1434,6 +1572,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/roles":
             if not _is_admin(self): return self._send(403, json.dumps({}), "application/json")
             return self._send(200, json.dumps(load_users().get("roles", {})), "application/json")
+        if path == "/api/log":   # the action log, read-only: Settings is admin-only, so the record is too
+            if not _is_admin(self): return self._send(403, json.dumps({}), "application/json")
+            q = _q(self.path)
+            return self._send(200, json.dumps(action_log.view(q.get("user"), q.get("action"), q.get("limit") or 200)), "application/json")
         if path.startswith("/api/set/"):
             if not _is_admin(self): return self._send(403, json.dumps({}), "application/json")
             try: d = read_tab(path.rsplit("/", 1)[-1])
@@ -1445,6 +1587,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config/presets":
             if not _is_admin(self): return self._send(403, json.dumps([]), "application/json")
             return self._send(200, json.dumps(preset_list()), "application/json")
+        if path == "/api/trash":            # the guide's provenance and what it offers; reads nothing off the LAN
+            if not _is_admin(self): return self._send(403, json.dumps({}), "application/json")
+            return self._send(200, json.dumps(trash_state()), "application/json")
+        if path == "/api/trash/plan":       # the diff, in full, before anything is written
+            if not _is_admin(self): return self._send(403, json.dumps({}), "application/json")
+            q = _q(self.path)
+            try: d = trash_plan(q.get("app", ""), q.get("name", ""))
+            except Exception as e: d = {"error": redact(e)[:200]}
+            return self._send(200, json.dumps(d), "application/json")
         if path == "/api/qualityprofiles":
             kind = _q(self.path).get("kind", "movie"); app = "radarr" if kind == "movie" else "sonarr"
             return self._send(200, json.dumps([{"id": p["id"], "name": p["name"]} for p in (arr(app, "/qualityprofile")[1] or [])]), "application/json")
@@ -1504,6 +1655,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(raw or b"{}")
             # ---- admin-only: global settings + config + user/role management ----
             _ADMIN_POST = ("/api/config/import", "/api/config/defaults", "/api/config/preset",
+                           "/api/trash/apply", "/api/trash/rollback", "/api/trash/refresh",
                            "/api/users", "/api/users/delete", "/api/roles", "/api/prowlarr", "/api/ntfy-test")
             if (path in _ADMIN_POST or path.startswith("/api/set/")) and not admin:
                 return self._send(403, json.dumps({"ok": False, "message": "Admin only"}), "application/json")
@@ -1521,9 +1673,21 @@ class Handler(BaseHTTPRequestHandler):
                 p = PRESETS.get(body.get("name"))
                 if not p: return self._send(400, json.dumps({"ok": False, "message": "unknown preset"}), "application/json")
                 ok, msg = apply_config(p); return self._send(200 if ok else 400, json.dumps({"ok": ok, "message": f"{body.get('name')} applied — {msg}"}), "application/json")
+            if path in ("/api/trash/apply", "/api/trash/rollback", "/api/trash/refresh"):
+                t0 = time.time()
+                if path.endswith("/apply"):
+                    app_, name_ = str(body.get("app") or ""), str(body.get("name") or "")
+                    ok, msg = trash_apply(app_, name_, body.get("repoint", True)); target = f"{app_}:{name_}"
+                elif path.endswith("/rollback"): ok, msg = trash_rollback(); target = "rollback"
+                else: ok, msg = trash_refresh(); target = "guide"
+                action_log.record("action", sess.get("user", "-"), sess.get("role", "-"),
+                                  "trash_" + path.rsplit("/", 1)[-1], target, ok, int((time.time() - t0) * 1000), msg)
+                return self._send(200 if ok else 400, json.dumps({"ok": ok, "message": msg}), "application/json")
             if path in ("/api/users", "/api/users/delete", "/api/roles"):   # account and permission changes are logged like every other write
                 ok, msg = save_user(body) if path == "/api/users" else delete_user(body.get("username")) if path == "/api/users/delete" else save_role(body)
-                print(f"action user={sess.get('user', '-')} role=admin action={path.rsplit('/', 1)[-1] if path != '/api/users' else 'user_save'} target={body.get('username') or body.get('role') or '-'} result={'ok' if ok else 'fail'} msg={json.dumps(str(msg)[:100])}", flush=True)
+                action_log.record("account", sess.get("user", "-"), "admin",
+                                  path.rsplit("/", 1)[-1] if path != "/api/users" else "user_save",
+                                  body.get("username") or body.get("role") or "-", ok, msg=msg)
                 return self._send(200 if ok else 400, json.dumps({"ok": ok, "message": msg}), "application/json")
             if path == "/api/action":
                 ok, msg = do_action(body, sess); return self._send(200 if ok else (403 if "permitted" in str(msg) else 400), json.dumps({"ok": ok, "message": msg}), "application/json")
@@ -1545,7 +1709,7 @@ DOCS_INNER = """<div class=doc>
 <tr><td><b>Partial</b></td><td>(TV) some episodes on disk, still getting the rest.</td></tr>
 <tr><td><b>Searching</b></td><td>A usable release exists and is being grabbed.</td></tr>
 <tr><td><b>Waiting</b></td><td>Not released yet (future dated).</td></tr>
-<tr><td><b>Unavailable</b></td><td>No usable release right now: <span class=k>Nothing found</span>, <span class=k>Only low-seed</span>, <span class=k>too big for size cap</span>, <span class=k>quality not allowed</span>, <span class=k>can't match releases</span>. The verdict is re-checked every few hours.</td></tr></table>
+<tr><td><b>Unavailable</b></td><td>No usable release right now: <span class=k>Nothing found</span>, <span class=k>Only low-seed</span>, <span class=k>too big for the size limit</span>, <span class=k>quality not allowed</span>, <span class=k>can't match releases</span>. The verdict is re-checked every few hours.</td></tr></table>
 <p>TV shows are classified against the <b>first tracked season that still has missing episodes</b>; the drawer lists <b>tracked (monitored) seasons</b> by default — <i>Show all seasons</i> shows the rest.</p>
 
 <h2>qBittorrent states</h2>

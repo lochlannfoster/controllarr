@@ -39,7 +39,7 @@ export function createLibrary(host, ctx) {
   function rowNode() {
     const n = h('article', { class: 'item' });
     // composedPath, not target.closest: a click inside the season tree re-renders it, so its target is detached by the time the event reaches the row
-    n.addEventListener('click', e => { if (e.composedPath().some(el => el instanceof Element && el.matches('.sel-wrap, .openx, .expand, dialog'))) return; primary(n, n._item); });
+    n.addEventListener('click', e => { if (e.composedPath().some(el => el instanceof Element && el.matches('.sel-wrap, .openx, .expand, .qchip, dialog'))) return; primary(n, n._item); });
     n.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('info')) { e.preventDefault(); primary(n, n._item); } });
     return n;
   }
@@ -76,6 +76,7 @@ export function createLibrary(host, ctx) {
         h('div', { class: 'm mono' }, meta.join(' · ')),
         live && live.why ? h('div', { class: 'why' }, h('span', { class: 'glyph', 'aria-hidden': 'true' }, '▲'), live.why) : null,
         live ? h('div', { class: 'pbar', role: 'progressbar', 'aria-label': 'Download progress', 'aria-valuenow': live.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: { width: live.pct + '%' } })) : null),
+      real && it.profile ? h('button', { type: 'button', class: 'qchip mono', 'aria-label': `Quality profile for ${title}: ${it.profile}`, title: `Quality profile: ${it.profile}. It decides which qualities and codecs this title may grab — press to change it`, onclick: e => { e.stopPropagation(); qualityPicker(it); } }, it.profile) : null,
       real ? h('button', { type: 'button', class: 'openx', 'aria-label': `Controls for ${title}`, title: TIP.openx, onclick: e => { e.stopPropagation(); openDrawer(it.kind, it.id, e.currentTarget); } }, '›') : h('span', { class: 'openx', 'aria-hidden': 'true' }, ''),
       exp);
     if (wasChecked) n.querySelector('.sel').checked = true;
@@ -162,7 +163,7 @@ export function createLibrary(host, ctx) {
   }
   async function qualityPicker(item) {
     const ps = await (await fetch('/api/qualityprofiles?kind=' + item.kind)).json();
-    const sel = h('select', { 'aria-label': 'Quality profile' }, ps.map(p => h('option', { value: p.id }, p.name)));
+    const sel = h('select', { 'aria-label': 'Quality profile' }, ps.map(p => h('option', { value: p.id, selected: p.name === item.profile }, p.name)));
     const dlg = modal('Quality profile: ' + incog.mask(item.title, item.kind + ':' + item.id), h('div', { class: 'dlg-row' }, sel, h('button', { type: 'button', class: 'btn btn-primary', onclick: async () => { const j = await ctx.post({ action: 'set_quality', profileId: sel.value, kind: item.kind, id: item.id, title: item.title }); toast(j.message, j.ok ? 'ok' : 'error'); dlg.close(); ctx.refresh('board'); } }, 'Set')));
   }
 

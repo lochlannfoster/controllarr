@@ -42,5 +42,15 @@ test.describe('accessibility', () => {
     await login(); await page.goto('/settings');
     await expect(page.locator('#pane .pane-head')).toBeVisible();
     await axe(page, 'settings');
+    await page.locator('#grouplist a[href="#log"]').click();
+    await expect(page.locator('#pane .pane-head h2')).toHaveText('Action log');
+    await axe(page, 'settings — action log');
+    await page.locator('#grouplist a[href="#trash"]').click();
+    await expect(page.locator('#pane .pane-head h2')).toHaveText('Quality & size — TRaSH Guides');
+    const movies = page.locator('.fset', { hasText: 'Movies (Radarr)' });
+    await movies.getByRole('button', { name: 'Preview changes' }).click();
+    await expect(movies.locator('.tdiff-sum')).toBeVisible();
+    await movies.locator('details').first().locator('summary').click();
+    await axe(page, 'settings — TRaSH diff');
   });
 });

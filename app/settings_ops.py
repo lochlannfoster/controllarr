@@ -6,13 +6,17 @@ Accessors are injected:
   qbit() -> (opener, base_url) or (None, None)                 # authenticated qBittorrent
   bazarr_post(fields)  / bazarr_get(path)                      # optional, for subtitles
 
-Canonical settings dict keys: size_cap, size_max, min_seeders, audio_language,
-allow_unknown, prefer_h264, seed_after_complete, max_active_downloads, subtitle_langs.
-"""
-import json, re, urllib.parse, urllib.request
+Canonical settings dict keys: min_seeders, audio_language, seed_after_complete,
+max_active_downloads, subtitle_langs.
 
-X265 = r"\b(x265|h\.?265|hevc)\b"
-X264 = r"\b(x264|h\.?264|avc)\b"
+**Quality correctness is TRaSH's, not ours.** Custom formats, their scores, which qualities a profile
+allows, its cutoff and its minFormatScore, and the per-quality size limits all come from the guide
+(`app/trash.py` reads and diffs it; `apply_trash` below writes it). This module used to hand-roll five
+custom formats and overwrite every quality definition with one MB-per-minute figure; both are gone.
+What stays the panel's here: the audio language (a household preference, and a real field on a Radarr
+profile), the per-indexer seeder threshold, media management and naming.
+"""
+import json, urllib.parse, urllib.request
 
 def _lang_id(arr, app, name):
     st, langs = arr(app, "/language")
@@ -20,85 +24,34 @@ def _lang_id(arr, app, name):
         if l.get("name") == name: return l["id"]
     return 1
 
-# Release-title patterns for foreign dubs (Radarr and Sonarr score these -1000 when audio language = Original).
-DUB_RX = r"\b(FRENCH|VFF|VFQ|VF2|VFI|TRUEFRENCH|MULTi|DUBBED|ITA(LIAN)?|GERMAN|SPANISH|LATINO|CASTELLANO|DUAL[.-]?AUDIO|HINDI|RUS(SIAN)?)\b"
-_CF_SPECS = {   # name -> (implementation, fields)
-    "x265-HEVC":       ("ReleaseTitleSpecification", [{"name": "value", "value": X265}]),
-    "x264-H264":       ("ReleaseTitleSpecification", [{"name": "value", "value": X264}]),
-    "Dubbed-penalty":  ("ReleaseTitleSpecification", [{"name": "value", "value": DUB_RX}]),
-    "Original-language": ("LanguageSpecification", [{"name": "value", "value": -2}]),   # -2 = "Original" in the arrs
-}
-def _cf_ids(arr, app, names, create=True):
-    """{name: customFormatId} for `names`, creating any that are missing (when create=True)."""
-    st, existing = arr(app, "/customformat")
-    have = {c["name"]: c["id"] for c in (existing or [])}
-    out = {}
-    for nm in names:
-        if nm in have: out[nm] = have[nm]; continue
-        if not create or nm not in _CF_SPECS: continue
-        impl, fields = _CF_SPECS[nm]
-        st, body = arr(app, "/customformat", "POST", {"name": nm, "includeCustomFormatWhenRenaming": False,
-            "specifications": [{"name": nm, "implementation": impl, "negate": False, "required": True, "fields": fields}]})
-        if isinstance(body, dict) and body.get("id"): out[nm] = body["id"]
-    return out
-def _format_scores(arr, app, prefer_h264, original_lang):
-    """The custom-format scores every profile should carry. Formats are created when a preference is ON and
-    zeroed (not deleted) when it is OFF, so turning a preference off actually takes effect."""
-    scores = {}
-    on = ["x265-HEVC", "x264-H264"] if prefer_h264 else []
-    if original_lang: on += ["Dubbed-penalty"] + (["Original-language"] if app == "sonarr" else [])
-    ids_on = _cf_ids(arr, app, on, create=True)
-    ids_off = _cf_ids(arr, app, [n for n in _CF_SPECS if n not in on], create=False)
-    want = {"x265-HEVC": -500, "x264-H264": 100, "Dubbed-penalty": -1000, "Original-language": 50}
-    for nm, fid in ids_on.items(): scores[fid] = want[nm]
-    for nm, fid in ids_off.items(): scores[fid] = 0
-    return scores
-
-def _set_unknown(items, allowed):
-    for it in items:
-        if (it.get("quality") or {}).get("name") == "Unknown":
-            it["allowed"] = allowed
-        if it.get("items"): _set_unknown(it["items"], allowed)
-
 _MM_KEYS = {"propers", "copy_hardlinks", "recycle_bin", "recycle_days", "min_free_mb"}
 def _ok(st): return isinstance(st, int) and 200 <= st < 300
 def apply_content(s, arr, bazarr_post=None, apps=("radarr", "sonarr"), log=lambda *a: None):
-    """Apply quality/size/seeders/language/media-management to the given arrs. Returns a list of
-    error strings (empty = everything accepted) so callers can report an honest result."""
+    """Apply audio language / seeders / media-management to the given arrs. Returns a list of error strings
+    (empty = everything accepted) so callers can report an honest result.
+
+    It deliberately does NOT touch a profile's qualities, cutoff, format scores or the quality definitions:
+    those are the guide's, and a save here must never quietly undo a sync (`apply_trash`)."""
     errs = []
-    cap = int(s["size_cap"]); maxcap = int(s.get("size_max") or max(int(cap * 1.25), 50))
-    if maxcap < cap: errs.append(f"max size {maxcap} < preferred {cap} MB/min"); maxcap = cap
     lang_name = s.get("audio_language", "Any")
     for app in apps:
-        # Radarr honours a per-profile language; Sonarr v4 has no such field (language is done with custom
-        # formats), so the real language preference is the custom-format scores below (both apps).
-        lang = {"id": -1, "name": "Any"} if lang_name == "Any" else {"id": _lang_id(arr, app, lang_name), "name": lang_name}
-        scores = _format_scores(arr, app, bool(s.get("prefer_h264")), lang_name == "Original")
-        st, profs = arr(app, "/qualityprofile")
-        for p in (profs or []):
-            if "language" in p or app == "radarr": p["language"] = lang
-            p["upgradeAllowed"] = True
-            _set_unknown(p.get("items", []), bool(s.get("allow_unknown")))
-            if scores:
-                items = p.get("formatItems", []); known = {i.get("format"): i for i in items}
-                for fid, sc in scores.items():
-                    if fid in known: known[fid]["score"] = sc
-                    else: items.append({"format": fid, "name": "", "score": sc})
-                p["formatItems"] = items; p["minFormatScore"] = -10000; p.setdefault("minUpgradeFormatScore", 1)
-            st, r = arr(app, "/qualityprofile/%d" % p["id"], "PUT", p)
-            if not _ok(st): errs.append(f"{app} profile '{p.get('name')}' rejected ({st})")
-        st, defs = arr(app, "/qualitydefinition")
-        for q in (defs or []):
-            if q.get("minSize") and q["minSize"] > 2: q["minSize"] = 2
-            q["preferredSize"] = cap; q["maxSize"] = maxcap
-            st, r = arr(app, "/qualitydefinition/%d" % q["id"], "PUT", q)
-            if not _ok(st): errs.append(f"{app} quality size rejected ({st})"); break
-        st, idxs = arr(app, "/indexer")
-        for idx in (idxs or []):
-            changed = False
-            for f in idx.get("fields", []):
-                if f["name"] == "minimumSeeders": f["value"] = int(s["min_seeders"]); changed = True
-            if changed: arr(app, "/indexer/%d" % idx["id"], "PUT", idx)
+        # Radarr honours a per-profile language; Sonarr v4 has no such field at all, so the setting is offered
+        # for movies only rather than faked with custom formats the guide would then fight over.
+        if app == "radarr" and "audio_language" in s:
+            lang = {"id": -1, "name": "Any"} if lang_name == "Any" else {"id": _lang_id(arr, app, lang_name), "name": lang_name}
+            st, profs = arr(app, "/qualityprofile")
+            for p in (profs or []):
+                if p.get("language") == lang: continue
+                p["language"] = lang
+                st, r = arr(app, "/qualityprofile/%d" % p["id"], "PUT", p)
+                if not _ok(st): errs.append(f"{app} profile '{p.get('name')}' rejected ({st})")
+        if s.get("min_seeders") not in (None, ""):
+            st, idxs = arr(app, "/indexer")
+            for idx in (idxs or []):
+                changed = False
+                for f in idx.get("fields", []):
+                    if f["name"] == "minimumSeeders": f["value"] = int(s["min_seeders"]); changed = True
+                if changed: arr(app, "/indexer/%d" % idx["id"], "PUT", idx)
         # media management (propers + hardlinks/recycle-bin/free-space) — only keys that are present
         if _MM_KEYS & set(s):
             st, mm = arr(app, "/config/mediamanagement")
@@ -132,26 +85,9 @@ def apply_content(s, arr, bazarr_post=None, apps=("radarr", "sonarr"), log=lambd
 
 def read_content(arr, app="radarr", bazarr_get=None):
     out = {}
-    st, defs = arr(app, "/qualitydefinition")
-    if defs:
-        out["size_cap"] = defs[0].get("preferredSize"); out["size_max"] = defs[0].get("maxSize")
-    st, profs = arr(app, "/qualityprofile")
-    if profs:
-        if profs[0].get("language"):                       # Radarr: per-profile language
-            out["audio_language"] = (profs[0].get("language") or {}).get("name", "Any")
-        else:                                              # Sonarr v4: infer from the Original-language custom format
-            ids = _cf_ids(arr, app, ["Original-language"], create=False)
-            oid = ids.get("Original-language")
-            out["audio_language"] = "Original" if oid and any(i.get("format") == oid and (i.get("score") or 0) > 0
-                                                              for i in profs[0].get("formatItems", [])) else "Any"
-        def has_unknown(items):
-            for it in items:
-                if (it.get("quality") or {}).get("name") == "Unknown" and it.get("allowed"): return True
-                if it.get("items") and has_unknown(it["items"]): return True
-            return False
-        out["allow_unknown"] = has_unknown(profs[0].get("items", []))
-        xid = _cf_ids(arr, app, ["x265-HEVC"], create=False).get("x265-HEVC")   # the h264 preference is the x265 penalty; the dub penalty is negative too and must not count
-        out["prefer_h264"] = bool(xid) and any(i.get("format") == xid and (i.get("score") or 0) < 0 for i in profs[0].get("formatItems", []))
+    if app == "radarr":
+        st, profs = arr(app, "/qualityprofile")
+        if profs: out["audio_language"] = (profs[0].get("language") or {}).get("name", "Any")
     st, idxs = arr(app, "/indexer")
     for idx in (idxs or []):
         for f in idx.get("fields", []):
@@ -168,6 +104,163 @@ def read_content(arr, app="radarr", bazarr_get=None):
     st, nm = arr(app, "/config/naming")
     if isinstance(nm, dict): out["rename"] = bool(nm.get("renameMovies" if app == "radarr" else "renameEpisodes"))
     return out
+
+# ---- TRaSH Guides: the one writer of custom formats, quality profiles and quality definitions ----
+# app/trash.py reads the guide and works out the difference; nothing there writes. Everything below is
+# driven by a plan that a person has already seen in full (Settings ▸ Quality & size ▸ TRaSH Guides).
+def apply_trash(pl, arr, log=lambda *a: None):
+    """Write one TRaSH plan into one arr. The order is the order the preview showed it, and it is the only
+    order that works: a profile can score a custom format only once the format exists, and the quality
+    definitions are global, so they go last and independently. Returns a list of error strings."""
+    app = pl["app"]; a = pl["apply"]; errs = []
+    to_update = set(pl["formats"]["update"])
+    st, have = arr(app, "/customformat")
+    by_name = {c["name"]: c for c in (have or []) if isinstance(c, dict)}
+    ids = {c["name"]: c["id"] for c in (have or []) if isinstance(c, dict)}
+    for f in a["formats"]:
+        name = f["name"]; body = a["bodies"][name]; cur = by_name.get(name)
+        if cur is None:
+            st, r = arr(app, "/customformat", "POST", body)
+            if isinstance(r, dict) and r.get("id"): ids[name] = r["id"]
+            else: errs.append(f"{app}: custom format {name!r} refused ({st})")
+        elif name in to_update:
+            # the guide's regex has moved on; update in place so every profile already scoring it follows
+            merged = dict(cur); merged.update(body); merged["id"] = cur["id"]
+            st, r = arr(app, "/customformat/%d" % cur["id"], "PUT", merged)
+            if not _ok(st): errs.append(f"{app}: custom format {name!r} not updated ({st})")
+    log(f"{app}: {len(a['formats'])} custom formats in place")
+
+    st, profs = arr(app, "/qualityprofile")
+    cur = next((p for p in (profs or []) if isinstance(p, dict) and p.get("name") == pl["profile"]), None)
+    if cur is None:
+        # start a new profile from the app's own schema, so any field this version of the arr expects and the
+        # guide says nothing about arrives with its default rather than missing
+        st, sch = arr(app, "/qualityprofile/schema")
+        body = {k: v for k, v in sch.items() if k != "id"} if isinstance(sch, dict) else {}
+    else:
+        body = dict(cur)
+    body["name"] = pl["profile"]
+    body.update({k: v for k, v in a["profile"].items() if v is not None})
+    if a["items"]: body["items"] = a["items"]
+    if a["cutoff"] is not None: body["cutoff"] = a["cutoff"]
+    # every format the arr knows appears, so one this profile does not want is scored 0 rather than left at
+    # whatever a previous sync (or the panel's old hand-rolled formats) gave it
+    want = {f["name"]: f["score"] for f in a["formats"]}
+    body["formatItems"] = [{"format": fid, "name": nm, "score": want.get(nm, 0)} for nm, fid in sorted(ids.items())]
+    if a.get("language") and app == "radarr":
+        body["language"] = {"id": _lang_id(arr, app, a["language"]), "name": a["language"]}
+    if cur: st, r = arr(app, "/qualityprofile/%d" % cur["id"], "PUT", body)
+    else:   st, r = arr(app, "/qualityprofile", "POST", body)
+    if not _ok(st): errs.append(f"{app}: profile {pl['profile']!r} refused ({st})")
+    else: log(f"{app}: profile {pl['profile']!r} " + ("updated" if cur else "created"))
+
+    st, defs = arr(app, "/qualitydefinition")
+    sizes = {q["quality"]: q for q in a["sizes"]}; n = 0
+    for q in (defs or []):
+        w = sizes.get((q.get("quality") or {}).get("name"))
+        if not w: continue
+        if (q.get("minSize"), q.get("preferredSize"), q.get("maxSize")) == (w["min"], w["preferred"], w["max"]): continue
+        q["minSize"], q["preferredSize"], q["maxSize"] = w["min"], w["preferred"], w["max"]
+        st, r = arr(app, "/qualitydefinition/%d" % q["id"], "PUT", q)
+        if _ok(st): n += 1
+        else: errs.append(f"{app}: size limits for {w['quality']} rejected ({st})")
+    log(f"{app}: {n} quality size limits set")
+    return errs
+
+def arr_state(arr, app):
+    """Everything a TRaSH apply overwrites, keyed by NAME so a snapshot means the same thing on another box:
+    each quality profile's allowed qualities, format scores, cutoff and score floors, plus the global quality
+    definitions. Custom formats are not in it on purpose — an apply only ever creates one, and a format
+    nothing scores changes nothing, so restoring the profiles below is what undoes the sync."""
+    st, cfs = arr(app, "/customformat")
+    names = {c["id"]: c["name"] for c in (cfs or []) if isinstance(c, dict)}
+    out = {"profiles": [], "quality_definitions": []}
+    st, profs = arr(app, "/qualityprofile")
+    for p in (profs or []):
+        if not isinstance(p, dict): continue
+        allowed = {}
+        def walk(items):
+            for it in items or []:
+                q = it.get("quality")
+                nm = q.get("name") if isinstance(q, dict) else it.get("name")
+                if nm: allowed[nm] = bool(it.get("allowed"))
+                if it.get("items"): walk(it["items"])
+        walk(p.get("items"))
+        out["profiles"].append({"name": p.get("name"), "upgradeAllowed": p.get("upgradeAllowed"),
+                                "cutoff": _cutoff_name(p), "language": (p.get("language") or {}).get("name"),
+                                "minFormatScore": p.get("minFormatScore"), "cutoffFormatScore": p.get("cutoffFormatScore"),
+                                "minUpgradeFormatScore": p.get("minUpgradeFormatScore"), "allowed": allowed,
+                                # a format scored 0 is a format this profile does not score: keeping the zeroes
+                                # would make two identical profiles compare unequal after a sync created formats
+                                "formats": {names.get(f.get("format")) or f.get("name"): f.get("score")
+                                            for f in p.get("formatItems", [])
+                                            if (f.get("score") or 0) and (names.get(f.get("format")) or f.get("name"))}})
+    st, defs = arr(app, "/qualitydefinition")
+    out["quality_definitions"] = [{"quality": (q.get("quality") or {}).get("name"), "min": q.get("minSize"),
+                                   "preferred": q.get("preferredSize"), "max": q.get("maxSize")} for q in (defs or [])]
+    return out
+
+def _cutoff_name(p):
+    cid = p.get("cutoff")
+    for it in p.get("items", []):
+        if it.get("id") == cid and it.get("name"): return it["name"]
+        q = it.get("quality")
+        if isinstance(q, dict) and q.get("id") == cid: return q["name"]
+        for sub in it.get("items", []):
+            sq = sub.get("quality")
+            if isinstance(sq, dict) and sq.get("id") == cid: return sq["name"]
+    return None
+
+def apply_arr_state(state, arr, app, log=lambda *a: None):
+    """Put an `arr_state` back. Profiles are matched by name and rewritten in place; a profile the snapshot
+    does not know is LEFT ALONE and named in the result — deleting a profile titles are already on is not a
+    rollback, it is a second accident. Returns (errors, list of profiles left alone)."""
+    errs = []; want = {p["name"]: p for p in state.get("profiles", []) if p.get("name")}
+    st, cfs = arr(app, "/customformat")
+    ids = {c["name"]: c["id"] for c in (cfs or []) if isinstance(c, dict)}
+    st, profs = arr(app, "/qualityprofile")
+    extra = []
+    for p in (profs or []):
+        if not isinstance(p, dict): continue
+        w = want.get(p.get("name"))
+        if not w: extra.append(p.get("name")); continue
+        def walk(items):
+            for it in items or []:
+                q = it.get("quality")
+                nm = q.get("name") if isinstance(q, dict) else it.get("name")
+                if nm in w["allowed"]: it["allowed"] = w["allowed"][nm]
+                if it.get("items"): walk(it["items"])
+        walk(p.get("items"))
+        for k in ("upgradeAllowed", "minFormatScore", "cutoffFormatScore", "minUpgradeFormatScore"):
+            if w.get(k) is not None: p[k] = w[k]
+        if w.get("language") and app == "radarr": p["language"] = {"id": _lang_id(arr, app, w["language"]), "name": w["language"]}
+        cid = _cutoff_id_by_name(p, w.get("cutoff"))
+        if cid is not None: p["cutoff"] = cid
+        p["formatItems"] = [{"format": fid, "name": nm, "score": w["formats"].get(nm, 0)} for nm, fid in sorted(ids.items())]
+        st, r = arr(app, "/qualityprofile/%d" % p["id"], "PUT", p)
+        if not _ok(st): errs.append(f"{app}: profile {p.get('name')!r} not restored ({st})")
+    sizes = {q["quality"]: q for q in state.get("quality_definitions", []) if q.get("quality")}
+    st, defs = arr(app, "/qualitydefinition")
+    for q in (defs or []):
+        w = sizes.get((q.get("quality") or {}).get("name"))
+        if not w: continue
+        if (q.get("minSize"), q.get("preferredSize"), q.get("maxSize")) == (w["min"], w["preferred"], w["max"]): continue
+        q["minSize"], q["preferredSize"], q["maxSize"] = w["min"], w["preferred"], w["max"]
+        st, r = arr(app, "/qualitydefinition/%d" % q["id"], "PUT", q)
+        if not _ok(st): errs.append(f"{app}: size limits for {w['quality']} not restored ({st})")
+    log(f"{app}: {len(want)} profiles restored" + (f"; left alone: {', '.join(extra)}" if extra else ""))
+    return errs, extra
+
+def _cutoff_id_by_name(p, name):
+    if not name: return None
+    for it in p.get("items", []):
+        if it.get("name") == name and it.get("id") is not None: return it["id"]
+        q = it.get("quality")
+        if isinstance(q, dict) and q.get("name") == name: return q["id"]
+        for sub in it.get("items", []):
+            sq = sub.get("quality")
+            if isinstance(sq, dict) and sq.get("name") == name: return sq["id"]
+    return None
 
 # ---- qBittorrent download controls (speeds, active limits, ratio, alt-speed) ----
 _B_PER_MB = 1048576

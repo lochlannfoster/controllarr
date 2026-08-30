@@ -292,6 +292,16 @@ dialog::backdrop { background: var(--scrim); }
 .provgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px var(--s-4); }
 .idxlist .frow { grid-template-columns: 1fr auto auto; }
 .danger-zone { border-color: var(--danger); }
+.logwrap { overflow-x: auto; }
+.logtable { border-collapse: collapse; width: 100%; font-size: var(--fs-data); }
+.logtable th, .logtable td { text-align: left; padding: 5px 10px 5px 0; border-top: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+.logtable thead th { border-top: 0; color: var(--fg-muted); font-weight: 500; font-size: var(--fs-caption); }
+.log-when, .log-ms { color: var(--fg-muted); }
+.log-ms { margin-left: 6px; font-size: var(--fs-caption); }
+.log-role { margin-left: 6px; color: var(--fg-muted); font-size: var(--fs-eyebrow); text-transform: uppercase; letter-spacing: .06em; }
+.log-target { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; }
+.log-msg { color: var(--fg-muted); white-space: normal; min-width: 20ch; }
+.log-filters { align-items: center; margin-bottom: var(--s-3); }
 .applybar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; gap: var(--s-4); align-items: center; padding: var(--s-3) var(--s-5); background: var(--surface); border-top: 2px solid var(--accent); z-index: 30; box-shadow: 0 -8px 24px var(--scrim); }
 .apply-diff { flex: 1; display: flex; flex-wrap: wrap; gap: 4px var(--s-4); color: var(--fg-muted); }
 .apply-diff .chg { color: var(--fg); }
@@ -369,6 +379,9 @@ dialog::backdrop { background: var(--scrim); }
 .ep-code { min-width: 62px; }
 .ep-title { flex: 1; }
 .ep-size { font-size: var(--fs-caption); }
+.ep-facts { font-size: var(--fs-caption); white-space: nowrap; }
+.qchip { flex: 0 0 auto; align-self: center; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; font-size: var(--fs-caption); color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-1); cursor: pointer; }
+.qchip:hover, .qchip:focus-visible { color: var(--fg); border-color: var(--fg-muted); }
 .ep-x { background: none; border: 0; color: var(--fg-muted); font-size: 18px; cursor: pointer; min-width: 32px; min-height: 32px; border-radius: var(--r-2); }
 .ep-x:hover { color: var(--fg); background: var(--surface-2); }
 input.ep-sel { width: 18px; height: 18px; }
@@ -381,6 +394,16 @@ input.ep-sel { width: 18px; height: 18px; }
 label.btn input[type="checkbox"] { margin-right: 2px; }
 
 /* ---- Settings ▸ Presets */
+/* TRaSH Guides: the diff a person reads before pressing Apply. Wide tables scroll inside themselves so the
+   page never scrolls sideways on a phone. */
+.tdiff { margin-top: var(--s-3); }
+.tdiff-sum { margin: 0 0 var(--s-3); padding-left: 1.1em; display: grid; gap: 3px; font-size: var(--fs-data); }
+.tdiff-from { color: var(--fg-muted); text-decoration: line-through; }
+.tdiff-wrap { overflow-x: auto; }
+.tdiff-list { white-space: normal; word-break: break-word; color: var(--fg-muted); font-size: var(--fs-caption); }
+.tdiff details { border-top: 1px solid var(--line); padding: 6px 0; }
+.tdiff summary { cursor: pointer; font-size: var(--fs-data); min-height: 24px; }
+.fwarn { color: var(--warn); font-size: var(--fs-data); margin: 0 0 var(--s-2); }
 .preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--s-3); }
 .preset { display: flex; flex-direction: column; gap: 6px; padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-2); background: var(--bg); }
 .preset .fhelp { flex: 1; }
@@ -392,4 +415,5 @@ select#tune { padding-right: 6px; }
   .sys-log { max-width: 60vw; }
   .season-btns { margin-left: 0; flex-basis: 100%; }
   .season-tors, .ep-list { padding-left: 8px; }
+  .ep-facts { display: none; }   /* the episode row is already full at this width; the facts stay in the episode dialog */
 }

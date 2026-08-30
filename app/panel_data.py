@@ -239,6 +239,18 @@ class Panel:
         k = self.apikey("jellyfin")
         if not k: _fail("no Jellyfin API key (JELLYFIN_APIKEY in app.env)")
         return {"Authorization": f'MediaBrowser Token="{k}", Client="Controllarr", Device="panel", DeviceId="controllarr", Version="1"'}
+    @staticmethod
+    def _one_per_screen(rows):
+        """One row per person per screen. A client that reconnects — a TV app resuming, a browser tab reopened —
+        leaves its old session behind for a few minutes, and Jellyfin lists both, so the same person shows up two or
+        three times watching the one thing. Same user, same device, same item is one screen: keep the furthest-along
+        copy, which is the live one."""
+        best = {}
+        for r in rows:
+            k = r.pop("_key")
+            cur = best.get(k)
+            if cur is None or (r.get("pct") or 0) >= (cur.get("pct") or 0): best[k] = r
+        return list(best.values())
     def jellyfin_sessions(self):
         def fn():
             st, r = self.http("GET", self.jellyfin_url + "/Sessions?activeWithinSeconds=300", headers=self._jf_headers(), timeout=5)
@@ -256,8 +268,9 @@ class Panel:
                             "title": title, "type": npi.get("Type"), "method": method, "paused": bool(ps.get("IsPaused")),
                             "reasons": reasons[:3], "video": ti.get("VideoCodec"), "audio": ti.get("AudioCodec"),
                             "bitrate": ti.get("Bitrate"), "pct": round(100 * pos / ticks) if ticks else None,
-                            "itemId": npi.get("Id")})
-            return out
+                            "itemId": npi.get("Id"),
+                            "_key": (s.get("UserName"), s.get("DeviceId") or s.get("DeviceName"), npi.get("Id"))})
+            return self._one_per_screen(out)
         return self.S.get("jf_sessions", 5, fn)
 
     # ---------------- optional companion state: a stack that also keeps a retry ledger (nothing here writes it)

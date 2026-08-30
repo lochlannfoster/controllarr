@@ -7,7 +7,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const STATE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.harness.json');
-export function state() { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); }
+// Playwright's webServer is ready when /health answers, but harness.py writes STATE_FILE only after it has
+// also waited for the first board — seconds later. Without this wait the first spec that needs the harness
+// races that window and dies on ENOENT, and how often depends on how long a board pass happens to take.
+export function state() {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); }
+    catch (e) {
+      if (Date.now() > deadline) throw new Error(`harness state file never appeared at ${STATE_FILE}: ${e.message}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);   // a synchronous 100 ms; state() has sync callers
+    }
+  }
+}
 
 export const test = base.extend({
   errors: [async ({ page }, use) => {

@@ -37,6 +37,34 @@ _LOCK = threading.Lock()
 STATE = {"scenario": "default", "down": set(), "calls": [], "data": {}}
 
 
+# The qualities the fake apps know, in the arrs' own weight order. A TRaSH sync builds a profile out of the
+# names the app answers with, so the fake has to know the ones the guide's profiles talk about.
+QUALITIES = [{"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0},
+             {"id": 1, "name": "SDTV", "source": "television", "resolution": 480},
+             {"id": 2, "name": "DVD", "source": "dvd", "resolution": 480},
+             {"id": 8, "name": "WEBDL-480p", "source": "web", "resolution": 480},
+             {"id": 12, "name": "WEBRip-480p", "source": "webrip", "resolution": 480},
+             {"id": 20, "name": "Bluray-480p", "source": "bluray", "resolution": 480},
+             {"id": 4, "name": "HDTV-720p", "source": "television", "resolution": 720},
+             {"id": 5, "name": "WEBDL-720p", "source": "web", "resolution": 720},
+             {"id": 14, "name": "WEBRip-720p", "source": "webrip", "resolution": 720},
+             {"id": 6, "name": "Bluray-720p", "source": "bluray", "resolution": 720},
+             {"id": 9, "name": "HDTV-1080p", "source": "television", "resolution": 1080},
+             {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080},
+             {"id": 15, "name": "WEBRip-1080p", "source": "webrip", "resolution": 1080},
+             {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080},
+             {"id": 30, "name": "Remux-1080p", "source": "bluray", "resolution": 1080},
+             {"id": 16, "name": "HDTV-2160p", "source": "television", "resolution": 2160},
+             {"id": 18, "name": "WEBDL-2160p", "source": "web", "resolution": 2160},
+             {"id": 17, "name": "WEBRip-2160p", "source": "webrip", "resolution": 2160},
+             {"id": 19, "name": "Bluray-2160p", "source": "bluray", "resolution": 2160},
+             {"id": 31, "name": "Remux-2160p", "source": "bluray", "resolution": 2160},
+             {"id": 25, "name": "BR-DISK", "source": "bluray", "resolution": 1080},
+             {"id": 10, "name": "Raw-HD", "source": "televisionRaw", "resolution": 1080}]
+
+ADOPT_NAME = "Adoptable Title"   # an unmapped folder with media in it: adoption should take this one
+GHOST_NAME = "Purged Leftover"   # an unmapped folder a purge emptied: adoption must NOT re-add this one
+
 def _iso(offset_s=0):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + offset_s))
 
@@ -77,7 +105,11 @@ def build_data(scenario="default"):
                   "hasFile": False, "airDate": "2017-02-01", "episodeFileId": 0} for n in range(1, 4)]
     episodes += [{"id": 1501, "seriesId": 11, "seasonNumber": 1, "episodeNumber": 1, "title": "Good News About Hell", "monitored": True,
                   "hasFile": True, "airDate": "2022-02-18", "episodeFileId": 7501}]
-    episodefiles = [{"id": 7100 + n, "seriesId": 12, "seasonNumber": 1, "size": 3_000_000_000} for n in range(1, 11)] + [{"id": 7501, "seriesId": 11, "seasonNumber": 1, "size": 2_200_000_000}]
+    episodefiles = [{"id": 7100 + n, "seriesId": 12, "seasonNumber": 1, "size": 3_000_000_000,
+                     "quality": {"quality": {"id": 7, "name": "Bluray-1080p"}},
+                     "mediaInfo": {"videoCodec": "x264", "audioCodec": "AC3", "audioChannels": 5.1, "resolution": "1920x1080"}} for n in range(1, 11)] + [
+                    {"id": 7501, "seriesId": 11, "seasonNumber": 1, "size": 2_200_000_000,
+                     "quality": {"quality": {"id": 2, "name": "DVD"}}}]   # scanned before Sonarr read media info: quality, nothing else
     torrents = [
         {"hash": STALLED_HASH, "name": "Blade.Runner.2049.2017.1080p.BluRay.x264-GROUP", "state": "stalledDL", "progress": 0.42,
          "dlspeed": 0, "upspeed": 0, "num_seeds": 0, "num_leechs": 3, "num_complete": 0, "availability": 0.42, "ratio": 0.0,
@@ -129,7 +161,26 @@ def build_data(scenario="default"):
         containers["radarr"] = "exited"
     elif scenario == "backup_stale":
         backups_enabled = True
+    customformats = [{"id": 7, "name": "Original-language", "includeCustomFormatWhenRenaming": False,
+                      "specifications": [{"name": "Original-language", "implementation": "LanguageSpecification",
+                                          "negate": False, "required": True, "fields": [{"name": "value", "value": -2}]}]}]
+    # profiles are stored, not rebuilt per call: a setting the panel writes has to be readable back afterwards.
+    # id order, as the real apps list them — "Any" first, which is exactly the trap the panel must not fall into.
+    _qitems = [{"quality": dict(q), "items": [], "allowed": q["name"] == "Bluray-1080p"} for q in QUALITIES]
+    qualityprofiles = {app: [{"id": 1, "name": "Any", "formatItems": [], "cutoff": 7, "upgradeAllowed": True,
+                              "minFormatScore": 0, "cutoffFormatScore": 10000, "minUpgradeFormatScore": 1,
+                              "items": [dict(i, quality=dict(i["quality"])) for i in _qitems]},
+                             {"id": 2, "name": "HD-1080p", "formatItems": [{"format": 7, "score": 100}], "cutoff": 7,
+                              "upgradeAllowed": True, "minFormatScore": 0, "cutoffFormatScore": 10000, "minUpgradeFormatScore": 1,
+                              "items": [dict(i, quality=dict(i["quality"])) for i in _qitems]}]
+                       for app in ("radarr", "sonarr")}
+    for pr in qualityprofiles["radarr"]: pr["language"] = {"id": -2, "name": "Original"}
+    # the guide writes a size limit per quality, so the fake has to hold more than one of them
+    qualitydefinitions = {app: [{"id": n + 1, "quality": dict(q), "title": q["name"], "weight": n + 1,
+                                 "minSize": 0, "preferredSize": 20, "maxSize": 50} for n, q in enumerate(QUALITIES)]
+                          for app in ("radarr", "sonarr")}
     return {"movies": movies, "series": series, "episodes": episodes, "episodefiles": episodefiles, "history": history, "torrents": torrents, "queue": queue, "requests": requests_,
+            "customformats": customformats, "qualityprofiles": qualityprofiles, "qualitydefinitions": qualitydefinitions,
             "health": health, "containers": containers, "sessions": sessions, "backups_enabled": backups_enabled,
             "prefs": {"dl_limit": 0, "up_limit": 2 * 1048576, "alt_dl_limit": 1048576, "alt_up_limit": 524288, "scheduler_enabled": False,
                       "schedule_from_hour": 8, "schedule_to_hour": 23, "max_active_downloads": 2, "max_active_uploads": 3,
@@ -246,20 +297,51 @@ class Handler(BaseHTTPRequestHandler):
             if app == "radarr": return [{"id": 4, "title": "Dune Part Three", "digitalRelease": _iso(3 * 86400), "hasFile": False}]
             return [{"seriesId": 12, "seasonNumber": 2, "episodeNumber": 4, "title": "Episode 4", "airDateUtc": _iso(2 * 86400), "hasFile": False,
                      "series": {"title": "The Expanse"}}]
+        if p == "/qualityprofile/schema":   # every quality the app knows, which is how a synced profile is built
+            return {"name": "", "upgradeAllowed": True, "cutoff": 0, "minFormatScore": 0, "cutoffFormatScore": 10000,
+                    "minUpgradeFormatScore": 1, "formatItems": [],
+                    "items": [{"quality": dict(q), "items": [], "allowed": False} for q in QUALITIES]}
         if p == "/qualityprofile":
-            if app == "radarr":
-                return [{"id": 1, "name": "HD-1080p", "language": {"id": -2, "name": "Original"}, "formatItems": [], "cutoff": 7,
-                         "items": [{"quality": {"id": 0, "name": "Unknown"}, "allowed": False}, {"quality": {"id": 7, "name": "Bluray-1080p"}, "allowed": True}]}]
-            return [{"id": 1, "name": "HD-1080p", "formatItems": [{"format": 7, "score": 100}], "cutoff": 7,
-                     "items": [{"quality": {"id": 0, "name": "Unknown"}, "allowed": False}, {"quality": {"id": 7, "name": "Bluray-1080p"}, "allowed": True}]}]
-        if p == "/qualitydefinition": return [{"id": 1, "quality": {"name": "Bluray-1080p"}, "preferredSize": 20, "maxSize": 50, "minSize": 0}]
-        if p == "/customformat": return [{"id": 7, "name": "Original-language"}]
+            if method == "POST":
+                pr = dict(body or {}); pr["id"] = max([x["id"] for x in d["qualityprofiles"][app]] or [0]) + 1
+                d["qualityprofiles"][app].append(pr); return 201, pr
+            return d["qualityprofiles"][app]
+        if p.startswith("/qualityprofile/") and method == "PUT":
+            pid = int(p.rsplit("/", 1)[1]); profs = d["qualityprofiles"][app]
+            for n, pr in enumerate(profs):
+                if pr["id"] == pid: profs[n] = dict(body or {}); return 202, profs[n]
+            return 404, {"message": "not found"}
+        if p == "/qualitydefinition": return d["qualitydefinitions"][app]
+        if p.startswith("/qualitydefinition/") and method == "PUT":
+            qid = int(p.rsplit("/", 1)[1]); defs = d["qualitydefinitions"][app]
+            for n, q in enumerate(defs):
+                if q["id"] == qid: defs[n] = dict(body or {}); return 202, defs[n]
+            return 404, {"message": "not found"}
+        if p == "/customformat":   # the arrs create a custom format on demand; a preference that needs one must be able to
+            if method == "POST":
+                cf = dict(body or {}); cf["id"] = max([c["id"] for c in d["customformats"]] or [10]) + 1
+                d["customformats"].append(cf); return 201, cf
+            return d["customformats"]
+        if p.startswith("/customformat/") and method == "PUT":
+            cid = int(p.rsplit("/", 1)[1])
+            for n, c in enumerate(d["customformats"]):
+                if c["id"] == cid: d["customformats"][n] = dict(body or {}, id=cid); return 202, d["customformats"][n]
+            return 404, {"message": "not found"}
         if p == "/language": return [{"id": 1, "name": "English"}, {"id": -2, "name": "Original"}]
         if p == "/indexer": return [{"id": 1, "name": "Indexer A (Prowlarr)", "enableRss": True, "fields": [{"name": "minimumSeeders", "value": 5}]}]
         if p == "/config/mediamanagement":
             return {"downloadPropersAndRepacks": "preferAndUpgrade", "copyUsingHardlinks": True, "recycleBin": "", "recycleBinCleanupDays": 7, "minimumFreeSpaceWhenImporting": 1000}
         if p == "/config/naming": return {"renameMovies": True, "renameEpisodes": True}
-        if p == "/rootfolder": return [{"id": 1, "path": "/data/media/movies" if app == "radarr" else "/data/media/tv", "freeSpace": 800e9}]
+        if p == "/rootfolder":
+            base = "/data/media/movies" if app == "radarr" else "/data/media/tv"
+            return [{"id": 1, "path": base, "freeSpace": 800e9,
+                     "unmappedFolders": [{"name": ADOPT_NAME, "path": f"{base}/{ADOPT_NAME}"},
+                                         {"name": GHOST_NAME, "path": f"{base}/{GHOST_NAME}"}]}]
+        if p == "/manualimport":   # the arr's own scan of a folder: the only way the panel can tell an empty one apart
+            folder = q.get("folder") or ""
+            if folder.endswith(ADOPT_NAME):
+                return [{"path": f"{folder}/thefile.mkv", "relativePath": "thefile.mkv", "size": 3_000_000_000}]
+            return []
         if p == "/downloadclient": return [{"id": 1, "name": "qBittorrent", "removeCompletedDownloads": False}]
         if p == "/release":
             if method == "POST": return 200, {"guid": (body or {}).get("guid")}
@@ -270,7 +352,10 @@ class Handler(BaseHTTPRequestHandler):
             return 201, {"id": 77, "name": (body or {}).get("name"), "status": "queued"}
         if p.startswith("/queue/") and method == "DELETE":
             qid = int(p.rsplit("/", 1)[1]); d["queue"][app][:] = [r for r in d["queue"][app] if r["id"] != qid]; return 200, {}
-        if p == f"/{key}/lookup": return []
+        if p == f"/{key}/lookup":
+            term = q.get("term") or ""
+            if ADOPT_NAME not in term: return []
+            return [{"title": ADOPT_NAME, "tmdbId": 999001, "tvdbId": 999002, "year": 2019, "seriesType": "standard"}]
         if p == f"/{key}":
             if method == "GET": return items
             if method == "POST": new = dict(body or {}); new["id"] = max(i["id"] for i in items) + 1; items.append(new); return 201, new

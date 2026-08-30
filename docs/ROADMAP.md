@@ -27,10 +27,10 @@ Dependency first, then cheapest to riskiest.
 |---|---|---|---|---|
 | 1 | [Incognito mode](#1-incognito-mode) | ☑ | small, self-contained; unblocks honest screenshots for every later item | the render layer |
 | 2 | [Secrets at rest](#2-secrets-at-rest) | ☑ | fix the credential choke point *before* four more credentials arrive | `services.load_env`, `services.apikey` |
-| 3 | [The action log](#3-the-action-log) | ☐ | defines the event record that notifications will subscribe to | `do_action` |
+| 3 | [The action log](#3-the-action-log) | ☑ | defines the event record that notifications will subscribe to | `do_action` |
 | 4 | [Notification channels](#4-notification-channels) | ☐ | needs 2 (tokens) and 3 (events) | `ntfy_test`, `NTFY_URL` |
 | 5 | [Calendar](#5-calendar) | ☐ | independent; the panel's missing axis | `panel_data`, a new source |
-| 6 | [TRaSH Guides sync](#6-trash-guides-sync) | ☐ | largest, and the only one that rewrites hand-tuned profiles | `settings_ops` |
+| 6 | [TRaSH Guides sync](#6-trash-guides-sync) | ☑ | largest, and the only one that rewrites hand-tuned profiles | `settings_ops` |
 
 ## 1. Incognito mode
 
@@ -95,6 +95,11 @@ owner's to make, not the implementer's.
 
 ## 3. The action log
 
+**Built.** It is **Settings ▸ Action log** — [DASHBOARD.md ▸ Settings](DASHBOARD.md#settings) says what it holds
+and [DEVELOPMENT.md §2.1](DEVELOPMENT.md#21-invariants) states the ring's rules; `app/action_log.py` is the seam,
+and `record` is its single writer. Account and permission changes turned out to belong in the same record, so they
+carry `type: "account"` rather than a second log. The rest of this section is the reasoning it was built from.
+
 **What.** `do_action` already writes exactly one line per write — user, role, action, target, result, duration.
 Tee it into a capped file the panel can show under Settings, filterable by user and action.
 
@@ -144,6 +149,26 @@ for art.
 
 ## 6. TRaSH Guides sync
 
+**Built.** It is **Settings ▸ Quality & size ▸ TRaSH Guides** — [DASHBOARD.md ▸ TRaSH Guides](DASHBOARD.md#trash-guides)
+says what a sync changes and what stays yours, [CONFIGURATION.md ▸ The quality guide](CONFIGURATION.md#the-quality-guide)
+records where the data came from and when, and [DEVELOPMENT.md §3.2](DEVELOPMENT.md#32-trash-guides-data-diff-writer)
+is the seam. Three things landed differently from the sketch below and are worth stating once:
+
+- The panel's `audio_language` survived, on **films only**. It is a real field on a Radarr quality profile;
+  Sonarr v4 has none, and the custom formats that used to fake one there are the guide's now.
+- **`allow_unknown` retired with the size cap**, which the sketch did not call for. It flips a quality item
+  inside a profile, so leaving it would have silently undone part of a sync every time somebody saved the
+  recycle-bin path. The line ended up simple: the guide owns the profile; the panel owns which profile a
+  title is on, the audio language, the seeder threshold, and everything under *Files*.
+- **TRaSH sets a minimum size per quality and effectively no maximum.** The old *Maximum size* really is gone
+  rather than replaced: after a sync a large release is ranked by score, not refused for its size. That is the
+  guide's judgement and the reason to adopt it, but it is a visible behaviour change on a metered line.
+
+The three-repo change went with it: `SIZE_CAP_MBPM`, `SIZE_MAX_MBPM`, `PREFER_H264` and `ALLOW_UNKNOWN_QUALITY`
+are gone from media-stack's `install.sh`, `.env.example`, `lib/wiring.py`, `lib/install-automation.sh` and its
+docs, and torrent-stack's `recovery-warden.py` now carries its own disk guardrail beside `MOVIE_CEIL` instead
+of reading a stack-wide content setting. The rest of this section is the reasoning it was built from.
+
 **What.** Fetch the [TRaSH Guides](https://trash-guides.info) custom formats, scores and quality profiles;
 show a real diff against what Radarr and Sonarr currently hold; apply on a press; roll back.
 
@@ -154,6 +179,36 @@ is the part people get wrong and cannot easily tell they have got wrong. `settin
 **Seam.** `settings_ops` stays the single writer of app settings. The Settings **Backup & config** group
 already saves and loads a settings snapshot — the rollback is that snapshot taken automatically before an
 apply, not a second mechanism invented alongside it.
+
+**What this item takes over.** `settings_ops._CF_SPECS` hand-rolls five custom formats — `x265-HEVC`,
+`x264-H264`, `Dubbed-penalty`, `Original-language` and `Legacy-codec` — and scores them into every profile.
+That is the same job TRaSH does, done by us, less well: TRaSH covers release groups, BR-DISK, upscales and low-
+quality sources that no hand-written regex here will keep up with. So this item **replaces** `_CF_SPECS` rather
+than adding to it. The line to hold is which side owns what: **TRaSH owns custom formats and their scores; the
+panel owns which profile a title is on, and the operational guardrails** — the seeder threshold and the
+download ceiling.
+
+**The size cap goes to TRaSH as well** (owner's decision, 2026-08-31). `size_cap` / `size_max` currently
+overwrite `preferredSize` and `maxSize` in *every* quality definition with one MB-per-minute figure for all
+resolutions, which is the crude version of what TRaSH sizes per quality. When this item lands, TRaSH's quality
+definitions win and the panel's Size fields retire with the custom formats. Two things make it more than a
+deletion, and both must be handled in the same change: the three quality presets (*4K quality*, *1080p
+balanced*, *Data-saver*) are defined by `size_cap` / `size_max` and need re-expressing as a choice of TRaSH
+profile or removing; and **`SIZE_CAP_MBPM` is not ours alone** — media-stack's `install.sh` asks for it,
+`lib/wiring.py` and `lib/install-automation.sh` write it, its `docs/SERVICES.md` documents it, and
+torrent-stack's `overlay/scripts/recovery-warden.py` reads it. The owner's instruction is to carry the change
+into all three repos in the same piece of work rather than keep the cap here to spare a running stack — so this
+item is a three-repo change, and a controllarr-only deletion is the one way to get it wrong.
+
+The two settings that reach into a profile today —
+*Prefer h264 over x265* and *Refuse legacy codecs* ([DASHBOARD.md ▸ Settings](DASHBOARD.md#settings)) — are
+provisional and retire with this item; `minFormatScore` becomes TRaSH's to set, through its own unwanted-
+formats convention rather than the panel's floor. `DEFAULT_PROFILE_RADARR` / `DEFAULT_PROFILE_SONARR` stay the
+panel's, but they name a profile TRaSH may rename or replace, so the sync has to re-point them or say it cannot.
+
+**Licence.** [TRaSH-Guides/Guides](https://github.com/TRaSH-Guides/Guides) is MIT (`Copyright (c) 2021 TRaSH`),
+which this GPL-3.0 repository may vendor provided the copyright and permission notice ship with the data. The
+machine-readable sets are `docs/json/radarr/` and `docs/json/sonarr/` in that repository.
 
 **Watch.** This is the largest item and the only one that rewrites profiles a user may have hand-tuned, so
 preview-then-apply is not a nicety. Recyclarr and Profilarr already do this well from a config file; our
