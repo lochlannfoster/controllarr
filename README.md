@@ -79,7 +79,7 @@ loaded from outside your network.
 ## Documentation
 
 [Install](docs/INSTALL.md) · [Configuration](docs/CONFIGURATION.md) · [The panel](docs/DASHBOARD.md) ·
-[Troubleshooting](docs/TROUBLESHOOTING.md)
+[Troubleshooting](docs/TROUBLESHOOTING.md) · [Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md)
 
 ## Licence
 
