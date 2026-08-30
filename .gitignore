@@ -5,6 +5,10 @@ docker-compose.override.yml
 install-*.log
 uninstall-*.log
 
+# --- AI-assistant working files (owner: the repo stays clean for anyone who clones it) ---
+.claude/
+CLAUDE.md
+
 # --- test tooling (tests/ and the Playwright config ARE committed; their outputs and deps are not) ---
 node_modules/
 test-results/
