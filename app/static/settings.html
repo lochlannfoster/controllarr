@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Settings — Controllarr</title>
+<link rel="preload" href="/static/fonts/ibm-plex-sans-condensed-latin-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/tokens.css?v=__VER__">
+<link rel="stylesheet" href="/static/app.css?v=__VER__">
+<link rel="icon" href="data:,">
+<script>window.MC = __CONFIG__;</script>
+</head>
+<body>
+<a class="skip" href="#pane">Skip to settings</a>
+<header class="top">
+  <h1 class="brand">Controllarr</h1>
+  <nav class="secnav" aria-label="Pages"><a href="/">‹ Dashboard</a><a href="/settings" aria-current="page">Settings</a></nav>
+  <div class="tools">
+    <button type="button" class="btn btn-sm" id="help" aria-pressed="false" title="Help mode: tap any control to read what it does instead of running it">?</button>
+    <button type="button" class="btn btn-sm" id="theme" title="Cycle theme: auto / dark / light">Theme</button>
+    <button type="button" class="btn btn-sm" id="density" title="Toggle row density" aria-pressed="false">Comfortable</button>
+    <a class="btn btn-sm" href="/logout" title="Sign out of the panel">Log out</a>
+  </div>
+</header>
+<main class="settings">
+  <nav class="groupnav" aria-label="Settings groups">
+    <select id="groupsel" aria-label="Settings group"></select>
+    <ul id="grouplist" role="list"></ul>
+  </nav>
+  <section id="pane" class="pane" aria-live="polite"></section>
+</main>
+<div id="applybar" class="applybar" hidden role="region" aria-label="Unsaved changes">
+  <div class="apply-diff mono" id="applydiff"></div>
+  <div class="apply-actions">
+    <button type="button" class="btn" id="discard">Discard</button>
+    <button type="button" class="btn btn-primary" id="apply">Apply</button>
+  </div>
+</div>
+<script type="module" src="/static/settings.js?v=__VER__"></script>
+</body>
+</html>

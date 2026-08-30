@@ -1,0 +1,14 @@
+{
+  "name": "controllarr-tests",
+  "private": true,
+  "description": "Browser and accessibility tests for Controllarr. Not part of the container.",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:a11y": "playwright test tests/e2e/a11y.spec.mjs",
+    "test:e2e:headed": "playwright test --headed --workers 1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.62.1"
+  }
+}

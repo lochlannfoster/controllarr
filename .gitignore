@@ -1,0 +1,19 @@
+# --- per-install runtime (never commit) ---
+.env
+config/
+docker-compose.override.yml
+install-*.log
+uninstall-*.log
+
+# --- test tooling (tests/ and the Playwright config ARE committed; their outputs and deps are not) ---
+node_modules/
+test-results/
+playwright-report/
+tests/.harness.json
+tests/local.env
+.venv/
+.ruff_cache/
+__pycache__/
+
+# a symlink here during development is still not part of the project
+node_modules

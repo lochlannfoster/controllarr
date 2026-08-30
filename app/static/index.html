@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Controllarr</title>
+<link rel="preload" href="/static/fonts/ibm-plex-sans-condensed-latin-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/tokens.css?v=__VER__">
+<link rel="stylesheet" href="/static/app.css?v=__VER__">
+<link rel="icon" href="data:,">
+<script>window.MC = __CONFIG__;</script>
+</head>
+<body>
+<a class="skip" href="#attention">Skip to what needs attention</a>
+<header class="top">
+  <h1 class="brand">Controllarr</h1>
+  <nav class="secnav" aria-label="Sections">
+    <a href="#attention">Attention <span class="cnt mono" data-count></span></a>
+    <a href="#live">Live</a>
+    <a href="#library">Library</a>
+    <a href="#reference">Reference</a>
+    <a href="/settings" data-admin>Settings</a>
+  </nav>
+  <div class="tools">
+    <button type="button" class="btn btn-sm" id="help" aria-pressed="false" title="Help mode: tap any control to read what it does instead of running it">?</button>
+    <button type="button" class="btn btn-sm" id="palette" title="Jump to anything (Ctrl/⌘ K)">⌘K</button>
+    <button type="button" class="btn btn-sm" id="theme" title="Cycle theme: auto / dark / light">Theme: auto</button>
+    <button type="button" class="btn btn-sm" id="density" title="Toggle row density" aria-pressed="false">Comfortable</button>
+    <button type="button" class="btn btn-sm" id="refresh-now" title="Re-scan the library now instead of waiting for the next automatic refresh">↻</button>
+    <a class="btn btn-sm" href="/logout" data-auth title="Sign out of the panel">Log out</a>
+  </div>
+</header>
+<div id="dash" class="dash" aria-label="Pipeline health"></div>
+<div id="system" class="sys" aria-label="System resources"></div>
+<main>
+  <section id="attention" data-section="attention" aria-labelledby="h-attention">
+    <div class="sec-head"><h2 id="h-attention">Needs attention <span class="cnt mono" data-count></span></h2><span data-age></span><nav class="sec-links" id="quicklinks" aria-label="Open an app"></nav></div>
+    <div class="attn-list"><div class="skel skel-attn" aria-hidden="true"><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div></div></div>
+  </section>
+  <section id="live" data-section="live" aria-labelledby="h-live">
+    <div class="sec-head"><h2 id="h-live">Live</h2><span data-age></span><span id="holdnote" class="muted"></span></div>
+    <div class="live-grid">
+      <div class="card">
+        <div class="meter">
+          <span class="dl">↓ <b class="mono">—</b></span><span class="up">↑ <b class="mono">—</b></span>
+          <svg id="spark" width="120" height="28" viewBox="0 0 120 28" role="img" aria-label="Throughput over the last two minutes"><path class="sp-up" d=""/><path class="sp-dl" d=""/></svg>
+          <span class="conn"><span class="pill pill-muted" aria-hidden="true"><span class="glyph">●</span><span>connecting…</span></span></span>
+          <span class="meter-actions">
+            <button type="button" class="btn btn-sm" data-global="qall_pause" data-cap="can_control_client" title="Stop every torrent (downloads and seeds) until you resume">Pause all</button>
+            <button type="button" class="btn btn-sm" data-global="qall_resume" data-cap="can_control_client" title="Start every stopped torrent again">Resume all</button>
+            <button type="button" class="btn btn-sm" data-global="alt_toggle" data-alt data-cap="can_control_client" aria-pressed="false" title="Switch qBittorrent between its normal and alternative (slower) speed limits">Alt-speed</button>
+            <select id="tune" class="btn btn-sm" data-admin aria-label="Apply a preset" title="Retune the stack in one tap: pause everything, stop seeding, balanced, overclock…"><option value="">Tune…</option></select>
+          </span>
+        </div>
+        <div class="torrents"><div class="skel skel-torrent" aria-hidden="true"><div class="skel-row"></div></div></div>
+      </div>
+      <div class="card">
+        <h3 class="eyebrow">Now playing</h3>
+        <div class="nowplaying"><div class="skel" aria-hidden="true"><div class="skel-row"></div></div></div>
+      </div>
+    </div>
+  </section>
+  <section id="library" data-section="library" aria-labelledby="h-library">
+    <div class="sec-head"><h2 id="h-library">Library</h2></div>
+    <div class="lib-tools">
+      <input id="filter" name="filter" type="search" placeholder="Filter titles…" aria-label="Filter titles" title="Type to narrow the list by title" autocomplete="off">
+      <select id="fstage" name="stage" aria-label="Show only one pipeline stage" title="Show only titles in one pipeline stage"><option value="">All stages</option></select>
+      <button type="button" class="btn btn-sm" id="import-btn" data-cap="can_import" title="Scan the media folders and adopt files Radarr/Sonarr don't know about yet">Import existing files</button>
+    </div>
+    <div class="sections"><div class="skel" aria-hidden="true"><div class="skel-row"></div><div class="skel-row"></div></div></div>
+  </section>
+  <section id="reference" data-section="reference" aria-labelledby="h-reference">
+    <div class="sec-head"><h2 id="h-reference">Reference</h2></div>
+    <div class="card"><h3 class="eyebrow">Apps</h3><div class="apps"><div class="skel" aria-hidden="true"><div class="skel-row"></div><div class="skel-row"></div></div></div></div>
+    <details id="docs" class="card"><summary>Glossary — pipeline stages and torrent states</summary><div class="doc" id="doc-body">__DOCS__</div></details>
+  </section>
+</main>
+<div id="selbar" class="selbar" hidden role="toolbar" aria-label="Bulk actions">
+  <span><b id="seln" class="mono">0</b> selected</span>
+  <button type="button" class="btn btn-sm" data-a="ase" title="List the actual releases for this title and grab a specific one — one title at a time">Search…</button>
+  <button type="button" class="btn btn-sm" data-a="retry" title="Ask Radarr/Sonarr to search again and grab the best release automatically">Retry</button>
+  <button type="button" class="btn btn-sm" data-a="refresh" title="Re-scan these titles' files and metadata">Refresh</button>
+  <button type="button" class="btn btn-sm" data-a="monitor_on" title="Start tracking these titles">Monitor</button>
+  <button type="button" class="btn btn-sm" data-a="monitor_off" title="Stop tracking these titles (nothing is deleted)">Unmonitor</button>
+  <button type="button" class="btn btn-sm" data-a="blocklist_retry" data-cap="can_remove" title="Blocklist the current download so it is never picked again, then search for a different release">Blocklist</button>
+  <button type="button" class="btn btn-sm" data-a="quality" title="Change which quality profile this title uses — one title at a time">Quality</button>
+  <button type="button" class="btn btn-sm" data-a="q_top" title="Move these downloads to the front of the qBittorrent queue">Top</button>
+  <button type="button" class="btn btn-sm" data-a="q_bottom" title="Move these downloads to the back of the queue">Bottom</button>
+  <button type="button" class="btn btn-sm" data-a="q_pause" title="Stop these downloads (they stay in the queue)">Pause</button>
+  <button type="button" class="btn btn-sm" data-a="q_resume" title="Start these downloads again">Resume</button>
+  <button type="button" class="btn btn-sm btn-danger-ghost" data-a="purge" data-cap="can_purge" title="Delete the files, the torrent AND the Jellyseerr request for these titles. Cannot be undone.">Purge</button>
+  <button type="button" class="btn btn-sm" data-a="clear" title="Deselect everything">Clear</button>
+</div>
+<script type="module" src="/static/app.js?v=__VER__"></script>
+</body>
+</html>

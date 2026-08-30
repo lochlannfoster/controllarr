@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Sign in — Controllarr</title>
+<link rel="preload" href="/static/fonts/ibm-plex-sans-condensed-latin-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/tokens.css?v=__VER__">
+<link rel="stylesheet" href="/static/app.css?v=__VER__">
+<link rel="icon" href="data:,">
+<script>window.MC = __CONFIG__;</script>
+</head>
+<body class="login-page">
+<main class="login-wrap">
+  <form method="post" action="/login" class="login card" aria-labelledby="login-title">
+    <h1 id="login-title" class="brand">Controllarr</h1>
+    <label>Username<input name="username" autofocus autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+    <input type="hidden" name="next" value="__NEXT__">
+    <p class="login-err" role="alert">__ERR__</p>
+    <button type="submit" class="btn btn-primary">Sign in</button>
+  </form>
+</main>
+</body>
+</html>

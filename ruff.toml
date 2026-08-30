@@ -1,0 +1,10 @@
+# Correctness-only lint. The code base deliberately uses one-line defs and
+# semicolons, so the style families (E1/E2/E3/E7) stay off; what is on finds real defects:
+# undefined names, unused imports/variables, bare excepts that swallow SystemExit, mutable defaults.
+target-version = "py312"          # the interpreter in the container
+line-length = 200
+extend-exclude = ["docs", "node_modules", "tests/.harness.json"]
+[lint]
+select = ["F", "E9", "B006", "B008", "B015", "B018", "PLE"]
+ignore = ["F401"]                 # re-exports (services imports used by callers) are intentional
+

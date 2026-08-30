@@ -1,0 +1,28 @@
+# Controllarr — one container, nothing else. `install.sh` writes .env and generates
+# docker-compose.override.yml for how this box reaches your apps (host networking or an
+# existing Docker network) and for the optional read-only mounts.
+name: ${STACK_NAME:-controllarr}
+
+services:
+  controllarr:
+    image: python:3.12-alpine
+    container_name: controllarr
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      CONTROLLARR_ENV: /config/controllarr.env   # the config file install.sh wrote into the data directory
+      CONTROLLARR_DIR: /config                   # accounts, sessions, live settings and the poster cache
+      CONTROLLARR_PORT: "3002"                   # fixed inside the container; CONTROLLARR_PORT in .env moves the HOST port
+      CONTROLLARR_REFRESH: "${CONTROLLARR_REFRESH:-15}"
+    volumes:
+      - ${CONTROLLARR_DATA}:/config
+      - ./app:/app:ro                            # the panel itself, read-only: `git pull` + restart is an upgrade
+    command: python3 /app/controllarr.py
+    ports:
+      - "${CONTROLLARR_PORT:-3002}:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3002/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
