@@ -104,6 +104,45 @@ tracked on purpose, because they are project plumbing rather than anyone's priva
 - `.claude/settings.json` — registers the startup hook below.
 - `.claude/hooks/session-start.sh` — installs `shellcheck` and the Playwright dependencies so a fresh
   or remote checkout can run `tests/run.sh quick` and `e2e` without hand-setup.
+- `.claude/mcp/mcp-browser.sh` — the launcher the browser MCP servers run through (below).
 
 Everything else under `.claude/` is ignored. If you keep private instructions, point them at this file
 rather than duplicating it — a convention recorded in two places is a convention that will disagree.
+
+### MCP servers
+
+`.mcp.json` at the repo root declares the MCP servers this project uses. It is **committed**, so the
+same set is available in a local checkout and in an ephemeral remote container — a server registered
+only on your own machine does not survive a fresh clone, which is the usual reason one goes missing.
+
+| Server | What it is for |
+|---|---|
+| `playwright` | drive a browser: navigate, click, snapshot the panel while it runs |
+| `chrome-devtools` | the DevTools protocol: network, console, traces, performance |
+| `context7` | fetches upstream library documentation on demand |
+
+Both browser servers run through `.claude/mcp/mcp-browser.sh` rather than being invoked directly,
+because a container and a laptop need different flags and the config has to suit both. The launcher
+**detects** each condition instead of assuming it: it pins `--executable-path` to the Chromium under
+`PLAYWRIGHT_BROWSERS_PATH` when that is set (images that preinstall a browser forbid downloading
+another), adds `--headless` when there is no `DISPLAY`, and drops the Chrome sandbox when running as
+`uid 0`. On a normal developer machine none of those apply and the server is launched untouched, headed
+and using your own Chrome — which is what you want when you are watching it work.
+
+Versions are pinned in `.mcp.json`. Bump them deliberately; `npx -y <pkg>@latest` in a config file means
+a tool can change under you between two runs of the same checkout.
+
+Two environment limits worth knowing before you debug a server that "does not work":
+
+- **`context7` needs egress to `context7.com`.** A restricted network — the remote container's egress
+  policy, for one — refuses that host, and the server's own error is a bare `TypeError: fetch failed`,
+  which reads like a bug and is not one. It works from a normal machine. `CONTEXT7_API_KEY` is optional
+  and only raises the rate limit; the config passes it through when it is set.
+- **`docker` has no MCP server here on purpose.** Docker's own MCP integration is part of Docker
+  Desktop's toolkit and needs a reachable daemon; the remote container ships the `docker` client with no
+  daemon behind it, so the server would start and then fail every call. The npm packages under similar
+  names are unaffiliated third-party ones. Use the `docker` CLI directly where a daemon exists.
+
+There is no MCP server for `ruff`, and nothing is missing for the want of one: Astral ships a language
+server, not an MCP server, and `tests/run.sh quick` already runs `ruff check` over `app` and `tests`
+with this repo's config. Lint through the pipeline, the same way CI does.

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/mcp.json",
+  "mcpServers": {
+    "playwright": {
+      "command": "${CLAUDE_PROJECT_DIR:-.}/.claude/mcp/mcp-browser.sh",
+      "args": ["playwright"]
+    },
+    "chrome-devtools": {
+      "command": "${CLAUDE_PROJECT_DIR:-.}/.claude/mcp/mcp-browser.sh",
+      "args": ["chrome-devtools"]
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@4.0.4"],
+      "env": { "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY:-}" }
+    }
+  }
+}
