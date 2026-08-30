@@ -25,7 +25,7 @@ Dependency first, then cheapest to riskiest.
 
 | # | Item | Done | Why here | Main seam |
 |---|---|---|---|---|
-| 1 | [Incognito mode](#1-incognito-mode) | ☐ | small, self-contained; unblocks honest screenshots for every later item | the render layer |
+| 1 | [Incognito mode](#1-incognito-mode) | ☑ | small, self-contained; unblocks honest screenshots for every later item | the render layer |
 | 2 | [Secrets at rest](#2-secrets-at-rest) | ☐ | fix the credential choke point *before* four more credentials arrive | `services.load_env`, `services.apikey` |
 | 3 | [The action log](#3-the-action-log) | ☐ | defines the event record that notifications will subscribe to | `do_action` |
 | 4 | [Notification channels](#4-notification-channels) | ☐ | needs 2 (tokens) and 3 (events) | `ntfy_test`, `NTFY_URL` |
@@ -33,6 +33,10 @@ Dependency first, then cheapest to riskiest.
 | 6 | [TRaSH Guides sync](#6-trash-guides-sync) | ☐ | largest, and the only one that rewrites hand-tuned profiles | `settings_ops` |
 
 ## 1. Incognito mode
+
+**Built.** It is the header's **Incognito** switch — [DASHBOARD.md ▸ Incognito](DASHBOARD.md#incognito) says what
+it covers and what it deliberately does not; [DEVELOPMENT.md §3.1](DEVELOPMENT.md#31-incognito-the-render-layer)
+is the seam. The rest of this section is the reasoning it was built from.
 
 **What.** A toggle that replaces every title, poster, requester and file name in the rendered page with a
 neutral placeholder, so the panel can be screenshotted or screen-shared without exposing a library.

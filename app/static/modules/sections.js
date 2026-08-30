@@ -2,6 +2,7 @@
 // Every one handles loading / empty / partial / error / stale.
 import { h, $, clear, append, patchList, setText, fmt } from './dom.js';
 import { pill, ageChip, errorState, emptyState, skeleton, applyCaps } from './ui.js';
+import * as incog from './incognito.js';
 
 const SEV = { danger: 'danger', warn: 'warn', info: 'flow' };
 const OPEN_GROUPS = new Set();   // Live groups the user expanded this page load (collapsed by default: ten episode rows is a screenful on a phone)
@@ -17,6 +18,18 @@ function sourceRows(sources, labels) {
   }
   return out;
 }
+// Incognito: an item's `subjects` are the real names the server composed into its sentences (a release, a
+// title, a requester). Only those are replaced, so the reason, the counts and the wording all survive.
+function shown(i) {
+  const subs = i.subjects;
+  if (!incog.isOn() || !subs || !subs.length) return i;
+  const rep = t => {
+    let out = t == null ? t : String(t);
+    for (const s of subs) if (out && s.text) out = out.split(s.text).join(s.who ? incog.person(s.key || s.text) : incog.alias(s.key || s.text));
+    return out;
+  };
+  return { ...i, title: rep(i.title), detail: rep(i.detail), facts: (i.facts || []).map(rep) };
+}
 const LABELS = { vpn: 'gluetun', services: 'Docker', qbit: 'qBittorrent', queue: 'Radarr/Sonarr queue', arr_health: 'Radarr/Sonarr health', prowlarr_health: 'Prowlarr', flaresolverr: 'FlareSolverr', requests: 'Jellyseerr', recovery: 'the retry ledger', board: 'the library scan', jellyfin: 'Jellyfin', calendar: 'the calendar', wanted: 'wanted lists', versions: 'version checks' };
 
 export function renderAttention(host, data, ctx) {
@@ -28,10 +41,11 @@ export function renderAttention(host, data, ctx) {
   const items = data.items || [];
   if (count) setText(count, items.length ? items.length : '');
   const nodes = [];
-  patchList(list, items, i => i.id, () => h('article', { class: 'attn' }), (n, i) => {
+  patchList(list, items, i => i.id, () => h('article', { class: 'attn' }), (n, raw) => {
     // structure (severity, kind, actions) rarely changes; the numbers in title/detail/facts change every
     // poll (peer counts, ages) and are updated in place so buttons keep focus and clicks land
-    const sig = [i.id, i.sev, i.kind, (i.actions || []).map(a => a.label).join(',')].join('|');
+    const i = shown(raw);
+    const sig = [i.id, i.sev, i.kind, (i.actions || []).map(a => a.label).join(','), incog.sig()].join('|');
     if (n.dataset.sig === sig) {
       setText(n.querySelector('.attn-title'), i.title);
       const det = n.querySelector('.attn-detail'); if (det) setText(det, i.detail || '');
@@ -48,7 +62,7 @@ export function renderAttention(host, data, ctx) {
         i.facts?.length ? h('div', { class: 'attn-facts mono' }, i.facts.map(f => h('span', {}, f))) : null),
       h('div', { class: 'attn-actions' },
         ...(i.actions || []).map((a, idx) => h('button', { type: 'button', class: 'btn btn-sm' + (idx === 0 && a.body ? ' btn-primary' : ''), dataset: { cap: a.cap || '' },
-          onclick: () => ctx.runAction(a, i) }, a.label))));
+          onclick: () => ctx.runAction(a, raw) }, a.label))));
     applyCaps(n, ctx.caps);
   });
   // partial: failed sources + not-ready board
@@ -61,11 +75,15 @@ export function renderAttention(host, data, ctx) {
   else if (emptyEl && (items.length || extra.length)) emptyEl.remove();
 }
 
+// The pseudonym key for a torrent: the title it belongs to when the arrs know it (so the Live row, the group
+// header and the Library row all read the same), else the name it is grouped under.
+const torKey = t => (t.matched && t.iid ? `${t.kind}:${t.iid}` : (t.group || t.name || ''));
+
 // ---- Live: one torrent row. `inGroup` rows sit under a group header, so they show the episode label only.
 function torRow(n, t, ctx, inGroup) {
   const stalled = /stalled|metaDL/.test(t.state) && t.progress < 100;
   n.className = 'tor' + (stalled ? ' tor-stalled' : '');
-  const sig = [t.state, t.matched, t.group || t.name, t.label, t.category, t.poster, inGroup].join('|');
+  const sig = [t.state, t.matched, t.group || t.name, t.label, t.category, t.poster, inGroup, incog.sig()].join('|');
   if (n.dataset.sig === sig) {   // structure unchanged: update the moving numbers only
     n.querySelector('.pbar > div').style.width = t.progress + '%'; n.querySelector('.pbar').setAttribute('aria-valuenow', t.progress);
     setText(n.querySelector('.tor-bar .mono'), fmt.pct(t.progress)); setText(n.querySelector('.qn'), t.priority > 0 ? '#' + t.priority : '—');
@@ -74,12 +92,15 @@ function torRow(n, t, ctx, inGroup) {
     return;
   }
   n.dataset.sig = sig;
-  const name = inGroup ? (t.label || t.name) : (t.group || t.name);
+  const key = torKey(t), label = incog.epLabel(t.label);   // keyed on the label itself: one pseudonym per episode
+  const gname = incog.mask(t.group || t.name, key);
+  const name = inGroup ? (label || gname) : gname;
+  const poster = incog.poster(t.poster);
   append(clear(n),
     h('div', { class: 'tor-head' },
       h('span', { class: 'qn mono', title: 'Queue position' }, t.priority > 0 ? '#' + t.priority : '—'),
-      !inGroup && t.poster ? h('img', { class: 'pos pos-sm', src: t.poster, alt: '', loading: 'lazy' }) : null,
-      h('div', { class: 'tor-title' }, h('b', {}, name), !inGroup && t.label ? h('span', { class: 'tor-ep mono' }, t.label) : null,
+      !inGroup && poster ? h('img', { class: 'pos pos-sm', src: poster, alt: '', loading: 'lazy' }) : null,
+      h('div', { class: 'tor-title' }, h('b', {}, name), !inGroup && label ? h('span', { class: 'tor-ep mono' }, label) : null,
         inGroup ? null : t.matched ? h('button', { type: 'button', class: 'link', title: 'Open this title in the library', onclick: () => ctx.openItem(t.kind, t.iid) }, 'open') : h('span', { class: 'muted' }, 'not in library')),
       pill(stalled ? 'danger' : /DL|downloading/.test(t.state) ? 'flow' : /UP|uploading/.test(t.state) ? 'ok' : 'muted', t.state)),
     h('div', { class: 'tor-bar' }, h('div', { class: 'pbar', role: 'progressbar', 'aria-label': 'Download progress', 'aria-valuenow': t.progress, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: { width: t.progress + '%' } })), h('span', { class: 'mono' }, fmt.pct(t.progress))),
@@ -90,8 +111,8 @@ function torRow(n, t, ctx, inGroup) {
          ['t_reannounce', 'Reannounce', 'Ask the trackers for peers again'], ['t_top', 'Top', 'Move to the front of the queue (pinned)'], ['t_bottom', 'Bottom', 'Move to the back of the queue']]
         .map(([a, l, tip]) => h('button', { type: 'button', class: 'btn btn-sm', title: tip, onclick: () => ctx.runAction({ body: { action: a, hash: t.hash } }) }, l)),
       h('button', { type: 'button', class: 'btn btn-sm', title: 'Download/seed regardless of queue limits', dataset: { cap: 'can_control_client' }, onclick: () => ctx.runAction({ body: { action: 't_forcestart', hash: t.hash, value: 1 } }) }, 'Force'),
-      h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: 'Remove the torrent from qBittorrent but keep the downloaded files', dataset: { cap: 'can_remove' }, onclick: () => ctx.runAction({ confirm: true, body: { action: 't_delete', hash: t.hash, name: t.group || t.name } }) }, 'Remove'),
-      h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: 'Delete the torrent AND its files: a movie is purged from the whole stack (Radarr, Jellyseerr too); episodes stop being tracked', dataset: { cap: 'can_purge' }, onclick: () => ctx.runAction({ confirm: true, body: { action: 't_purge', hash: t.hash, name: (t.group || t.name) + (t.label ? ' ' + t.label : '') } }) }, 'Purge')));
+      h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: 'Remove the torrent from qBittorrent but keep the downloaded files', dataset: { cap: 'can_remove' }, onclick: () => ctx.runAction({ confirm: true, body: { action: 't_delete', hash: t.hash, name: t.group || t.name }, shown: { name: gname } }) }, 'Remove'),
+      h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: 'Delete the torrent AND its files: a movie is purged from the whole stack (Radarr, Jellyseerr too); episodes stop being tracked', dataset: { cap: 'can_purge' }, onclick: () => ctx.runAction({ confirm: true, body: { action: 't_purge', hash: t.hash, name: (t.group || t.name) + (t.label ? ' ' + t.label : '') }, shown: { name: gname + (label ? ' ' + label : '') } }) }, 'Purge')));
   applyCaps(n, ctx.caps);
 }
 export function renderLive(host, data, ctx) {
@@ -124,14 +145,16 @@ export function renderLive(host, data, ctx) {
     const size = g.tors.reduce((a, t) => a + (t.size || 0), 0), got = g.tors.reduce((a, t) => a + (t.size || 0) * (t.progress || 0) / 100, 0);
     const pct = size ? Math.round(100 * got / size) : 0, speed = g.tors.reduce((a, t) => a + (t.dlspeed || 0), 0);
     const agg = `${done}/${g.tors.length} done${dl ? ` · ${dl} downloading` : ''} · ↓ ${fmt.speed(speed)} · ${fmt.bytes(size)}`;
-    const sig = [g.title, g.poster, hashes, seasons.join(','), g.matched].join('|');
+    const sig = [g.title, g.poster, hashes, seasons.join(','), g.matched, incog.sig()].join('|');
     if (head.dataset.sig === sig) { setText(head.querySelector('.tg-agg'), agg); const bar = head.querySelector('.pbar > div'); bar.style.width = pct + '%'; head.querySelector('.pbar').setAttribute('aria-valuenow', pct); setText(head.querySelector('.tg-bar .mono'), fmt.pct(pct)); return; }
     head.dataset.sig = sig;
-    const name = g.title + (seasons.length === 1 ? ` S${String(seasons[0]).padStart(2, '0')}` : '');
-    const caret = h('button', { type: 'button', class: 'btn btn-icon scaret tg-caret', 'aria-expanded': String(open), title: `Show or hide the ${g.tors.length} torrents of ${g.title}`, onclick: () => { const now = !OPEN_GROUPS.has(i.key); now ? OPEN_GROUPS.add(i.key) : OPEN_GROUPS.delete(i.key); rows.hidden = !now; caret.setAttribute('aria-expanded', String(now)); caret.textContent = now ? '▾' : '▸'; } }, open ? '▾' : '▸');
+    const gtitle = incog.mask(g.title, torKey(g.tors[0])), gposter = incog.poster(g.poster);
+    const suffix = seasons.length === 1 ? ` S${String(seasons[0]).padStart(2, '0')}` : '';
+    const name = g.title + suffix, shownName = gtitle + suffix;   // the action carries the real name, the dialog what the row shows
+    const caret = h('button', { type: 'button', class: 'btn btn-icon scaret tg-caret', 'aria-expanded': String(open), title: `Show or hide the ${g.tors.length} torrents of ${gtitle}`, onclick: () => { const now = !OPEN_GROUPS.has(i.key); now ? OPEN_GROUPS.add(i.key) : OPEN_GROUPS.delete(i.key); rows.hidden = !now; caret.setAttribute('aria-expanded', String(now)); caret.textContent = now ? '▾' : '▸'; } }, open ? '▾' : '▸');
     append(clear(head), caret,
-      g.poster ? h('img', { class: 'pos pos-sm', src: g.poster, alt: '', loading: 'lazy' }) : null,
-      h('div', { class: 'tor-title' }, h('b', {}, g.title), h('span', { class: 'mono muted' }, `${g.tors.length} torrents${seasons.length ? ' · ' + seasons.map(x => 'S' + String(x).padStart(2, '0')).join(', ') : ''}`),
+      gposter ? h('img', { class: 'pos pos-sm', src: gposter, alt: '', loading: 'lazy' }) : null,
+      h('div', { class: 'tor-title' }, h('b', {}, gtitle), h('span', { class: 'mono muted' }, `${g.tors.length} torrents${seasons.length ? ' · ' + seasons.map(x => 'S' + String(x).padStart(2, '0')).join(', ') : ''}`),
         g.matched && g.iid ? h('button', { type: 'button', class: 'link', title: 'Open this title in the library', onclick: () => ctx.openItem(g.kind, g.iid) }, 'open') : h('span', { class: 'muted' }, 'not in library')),
       h('div', { class: 'tor-bar tg-bar' }, h('div', { class: 'pbar', role: 'progressbar', 'aria-label': 'Group progress', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: { width: pct + '%' } })), h('span', { class: 'mono' }, fmt.pct(pct))),
       h('div', { class: 'tg-agg mono muted' }, agg),
@@ -139,8 +162,8 @@ export function renderLive(host, data, ctx) {
           ...[['t_pause', 'Pause all', 'Stop every torrent in this group'], ['t_resume', 'Resume all', 'Start every torrent in this group'], ['t_top', 'Top', 'Move the whole group to the front of the queue'], ['t_bottom', 'Bottom', 'Move the whole group to the back of the queue']]
             .map(([a, l, tip]) => h('button', { type: 'button', class: 'btn btn-sm', title: tip, onclick: () => ctx.runAction({ body: { action: a, hash: hashes } }) }, l)),
           h('button', { type: 'button', class: 'btn btn-sm', title: 'Download every torrent in this group regardless of the queue limits', dataset: { cap: 'can_control_client' }, onclick: () => ctx.runAction({ body: { action: 't_forcestart', hash: hashes, value: 1 } }) }, 'Force all'),
-          h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: 'Remove every torrent in this group from qBittorrent but keep the downloaded files', dataset: { cap: 'can_remove' }, onclick: () => ctx.runAction({ confirm: true, body: { action: 't_delete', hash: hashes, name: name } }) }, 'Remove all'),
-          h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: 'Delete every torrent in this group AND its files; the episodes stop being tracked (a movie is purged whole)', dataset: { cap: 'can_purge' }, onclick: () => ctx.runAction({ confirm: true, body: { action: 't_purge', hash: hashes, name: name } }) }, 'Purge all')));
+          h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: 'Remove every torrent in this group from qBittorrent but keep the downloaded files', dataset: { cap: 'can_remove' }, onclick: () => ctx.runAction({ confirm: true, body: { action: 't_delete', hash: hashes, name: name }, shown: { name: shownName } }) }, 'Remove all'),
+          h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: 'Delete every torrent in this group AND its files; the episodes stop being tracked (a movie is purged whole)', dataset: { cap: 'can_purge' }, onclick: () => ctx.runAction({ confirm: true, body: { action: 't_purge', hash: hashes, name: name }, shown: { name: shownName } }) }, 'Purge all')));
     applyCaps(head, ctx.caps);
     patchList(rows, g.tors, t => t.hash, () => h('article', { class: 'tor' }), (rn, t) => torRow(rn, t, ctx, true));
   });
@@ -158,8 +181,8 @@ export function renderLive(host, data, ctx) {
   else for (const s of sess) {
     const method = s.method === 'DirectPlay' ? 'Direct Play' : s.method === 'DirectStream' ? 'Direct Stream' : 'Transcode';
     now.append(h('article', { class: 'np' },
-      h('div', { class: 'np-title' }, h('b', {}, s.title), s.paused ? h('span', { class: 'muted' }, ' · paused') : null),
-      h('div', { class: 'np-facts mono' }, h('span', {}, s.user), h('span', {}, s.client), h('span', {}, s.device), s.pct != null ? h('span', {}, s.pct + ' %') : null),
+      h('div', { class: 'np-title' }, h('b', {}, incog.mask(s.title)), s.paused ? h('span', { class: 'muted' }, ' · paused') : null),
+      h('div', { class: 'np-facts mono' }, h('span', {}, incog.who(s.user)), h('span', {}, s.client), h('span', {}, incog.who(s.device)), s.pct != null ? h('span', {}, s.pct + ' %') : null),
       h('div', {}, pill(method === 'Transcode' ? 'warn' : 'ok', method), method === 'Transcode' && s.reasons?.length ? h('span', { class: 'muted' }, ' ' + s.reasons.join(', ') + (s.video ? ` → ${s.video}` : '')) : null)));
   }
 }

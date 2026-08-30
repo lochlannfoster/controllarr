@@ -401,8 +401,17 @@ class Panel:
     def _sources(self, **metas):
         return {k: v for k, v in metas.items() if v is not None}
 
+    @staticmethod
+    def _subject(text, key=None, who=False):
+        """One real name an attention item's own text carries, for the client's incognito pass (never used here)."""
+        return {"text": text, "key": key or text, "who": bool(who)}
+
     def attention(self):
-        """Tier 1: only actionable problems, each with one primary action. Empty list is the good state."""
+        """Tier 1: only actionable problems, each with one primary action. Empty list is the good state.
+
+        An item whose sentences carry a real name (a release, a title, a requester) also lists it under
+        `subjects`: incognito replaces exactly that, in the browser, and leaves the reason and the counts —
+        the part that makes the row worth reading — alone. Nothing here is ever substituted server-side."""
         items = []; metas = {}
         st = self.status(); res = st.get("resources", {}) or {}; hp = st.get("health", {}) or {}
         # the board (disk, unavailable titles, torrent<->title matching) is only trustworthy once the
@@ -448,6 +457,7 @@ class Panel:
                 act.append({"label": "Reannounce", "body": {"action": "t_reannounce", "hash": t["hash"]}})
                 items.append(dict(id="stalled:" + t["hash"], sev="danger", kind="stalled", title=f"{name} — stalled",
                     detail=t["why"], facts=[f"queue #{t.get('priority') or '—'}", f"{t.get('progress', 0)} %", gb(t.get("size")), f"{t.get('num_seeds', 0)} seeds / {t.get('num_leechs', 0)} peers"],
+                    subjects=[self._subject(name, f"{t['kind']}:{t['iid']}" if t.get("matched") and t.get("iid") else name)],
                     actions=act))
         # import problems
         qi, metas["queue"] = self.queue_issues()
@@ -457,6 +467,7 @@ class Panel:
             if q["tracked"] in ("warning", "error") or q["status"] == "failed":
                 items.append(dict(id="import:" + str(q["qid"]), sev="warn", kind="import", title=f"{q['title'][:70]} — import needs attention",
                     detail=q["error"] or f"{q['app']} reports {q['tracked']}", facts=[q["app"], f"{gb(q.get('sizeleft'))} left"],
+                    subjects=[self._subject(q["title"][:70], f"{q['kind']}:{q['id']}" if q.get("id") else q["title"][:70])],
                     actions=[{"label": "Blocklist & retry", "cap": "can_remove", "confirm": True, "body": {"action": "blocklist_retry", "kind": q["kind"], "id": q["id"], "title": q["title"]}},
                              {"label": "Open", "open": {"kind": q["kind"], "id": q["id"]}}]))
         # indexers / flaresolverr (Prowlarr and FlareSolverr are one optional part; absent = no row, not an error)
@@ -489,6 +500,7 @@ class Panel:
         for r in pr or []:
             items.append(dict(id=f"req:{r['reqId']}", sev="info", kind="request", title=f"{r['who']} requested a {r['type']}",
                 detail=("seasons " + ", ".join(str(s) for s in r["seasons"]) if r.get("seasons") else "") , facts=[r["added"]],
+                subjects=[self._subject(r["who"], who=True)],
                 actions=[{"label": "Approve", "cap": "can_manage_requests", "body": {"action": "req_approve", "reqId": r["reqId"]}},
                          {"label": "Decline", "cap": "can_manage_requests", "confirm": True, "body": {"action": "req_decline", "reqId": r["reqId"]}}],
                 ids={"tmdbId": r.get("tmdbId"), "tvdbId": r.get("tvdbId")}))
@@ -504,6 +516,7 @@ class Panel:
             items.append(dict(id=f"unavail:{it.get('kind')}:{it.get('id')}", sev="warn", kind="unavailable",
                 title=f"{it.get('title')} — unavailable" + (f" for {days} d" if days else ""),
                 detail=it.get("reason") or "no usable release", facts=[x for x in (it.get("detail"), f"req: {it.get('who')}" if it.get("who") else "") if x],
+                subjects=[self._subject(it.get("title"), f"{it.get('kind')}:{it.get('id')}")] + ([self._subject(it.get("who"), who=True)] if it.get("who") else []),
                 actions=[{"label": "Search again", "body": {"action": "retry", "kind": it.get("kind"), "id": it.get("id"), "title": it.get("title")}},
                          {"label": "Open", "open": {"kind": it.get("kind"), "id": it.get("id")}}]))
         # backup
@@ -557,8 +570,13 @@ class Panel:
 
     # ---------------- consequence text for confirmations (the server knows the counts)
     def consequence(self, a, item_detail):
-        """Return (title, text) describing exactly what an action will do, with real counts."""
+        """Return (title, text) describing exactly what an action will do, with real counts.
+
+        `incognito=1` on the query means the page that asked is drawing pseudonyms: the title and name in `a`
+        already are one, and the names this method would add from qBittorrent are left out. Every count stays —
+        a confirmation that cannot say how many files it deletes is not a confirmation."""
         act = a.get("action"); kind = a.get("kind"); aid = a.get("id"); title = a.get("title") or a.get("name") or "this item"
+        incog = str(a.get("incognito") or "").lower() in ("1", "true", "yes")
         def tors_for(kind, aid):
             try:
                 d = item_detail(kind, aid) or {}
@@ -571,7 +589,8 @@ class Panel:
             return (f"Purge {title}", f"Deletes {gb(size) or '0 GB'} of files on disk, removes {len(tors)} torrent{'s' if len(tors) != 1 else ''} from qBittorrent{req}, and drops the title from {'Radarr' if kind == 'movie' else 'Sonarr'}; Bazarr and Jellyfin are told to rescan so it disappears there too. Can't be undone.")
         if act == "blocklist_retry":
             tors, _ = tors_for(kind, aid)
-            names = ", ".join(((t.get("name") or "")[:60] + ("…" if len(t.get("name") or "") > 60 else "")) for t in tors[:2]) or "the current download"
+            names = "" if incog else ", ".join(((t.get("name") or "")[:60] + ("…" if len(t.get("name") or "") > 60 else "")) for t in tors[:2])
+            names = names or "the current download"
             return (f"Blocklist & retry {title}", f"Blocks {names} so it is never picked again, removes {len(tors) or 'its'} torrent{'s' if len(tors) != 1 else ''} from qBittorrent, then searches for a different release.")
         if act == "q_remove":
             tors, _ = tors_for(kind, aid)
@@ -582,7 +601,7 @@ class Panel:
             try: tors = self.torrents()
             except Exception: tors = []
             dl = [t for t in tors if (t.get("state") or "").endswith("DL") or t.get("state") == "downloading"]
-            return ("Pause all", f"Stops {len(tors)} torrent{'s' if len(tors) != 1 else ''} — {len(dl)} downloading" + (": " + ", ".join((t.get('group') or t.get('name') or '')[:30] for t in dl[:3]) if dl else "") + ". Seeding stops too until you resume.")
+            return ("Pause all", f"Stops {len(tors)} torrent{'s' if len(tors) != 1 else ''} — {len(dl)} downloading" + (": " + ", ".join((t.get('group') or t.get('name') or '')[:30] for t in dl[:3]) if dl and not incog else "") + ". Seeding stops too until you resume.")
         if act == "qall_resume":
             return ("Resume all", "Starts every stopped torrent again, downloads and seeds.")
         if act in ("episode_delete_file", "episode_delete_files"):

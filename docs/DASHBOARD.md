@@ -31,7 +31,7 @@ Related: [INSTALL.md](INSTALL.md) · [CONFIGURATION.md](CONFIGURATION.md) · [TR
 
 **Reference** — every configured app with its version and a link, and the glossary.
 
-**Header** — section links, **?** help mode, **⌘K / Ctrl-K** palette (sections, apps, titles, *Pause all*, *RSS sync*, *Test all indexers*, *Scan Jellyfin library*…), theme, density, **↻** rescan, log out.
+**Header** — section links, **?** help mode, **⌘K / Ctrl-K** palette (sections, apps, titles, *Pause all*, *RSS sync*, *Test all indexers*, *Scan Jellyfin library*…), theme, density, **Incognito** ([below](#incognito)), **↻** rescan, log out.
 
 ## Title controls (the drawer)
 
@@ -43,9 +43,34 @@ Full-screen on a phone; focus-trapped; `Esc` closes and returns focus.
 - **Library** — season selector, **Search…** (the release picker: quality, size, seeders, rejection, **Grab** needs `can_grab`), **Auto-search**, **Refresh**, **Blocklist & retry**, **Purge** (everything, everywhere: [purge](#purging)).
 - **Torrents** — every torrent of the title, downloading **or seeding** (the arr's history finds the ones that left the queue), each with state, progress, queue position, speeds, seeds, ratio, ETA, the reason, all eight controls and per-torrent ↓/↑ caps.
 
+## Incognito
+
+**Incognito** in the header draws every title, poster, requester and file name as a made-up one — *Amber
+Lantern 47*, *Quiet Otter* — so you can screenshot the panel or share your screen without showing your
+library. It is remembered per browser, like density, and applies to the dashboard.
+
+Only what is *drawn* changes. Each pseudonym is a hash of the item's own id, so one title reads the same on
+every refresh and in every section — the Library row, its torrent in **Live**, the row in **Needs attention**
+and the confirmation dialog all say the same made-up name, and a sequence of screenshots stays coherent. The
+page keeps the real values underneath, so:
+
+- the **filter box** and the **palette** still match what you actually own — type *Expanse*, the row appears
+  under its pseudonym;
+- every control does exactly what it did: the id in each action is untouched, and so is the panel's own log
+  line, which keeps the **real** target (an audit trail of pseudonyms is not an audit trail);
+- a confirmation still says what it will do with **real counts** — *deletes 3 episode files on disk and
+  removes 2 torrents* — it just does not name the thing.
+
+What it covers: titles, years and posters; episode and release names; requesters and Jellyfin viewers with
+their devices; the container **log lines** in System (that is where a file name usually turns up, and half a
+path is still a leak, so the whole line is held back). What it does **not** cover: your server's name and
+address in the Dash, container and app names, the wording of an app's own health message, and the Settings
+page. It is a screenshot shield, not access control — whoever has the browser, or the API behind it, still
+has the real data.
+
 ## Confirmations and logging
 
-Anything destructive opens a dialog whose text **the server writes with the real counts** — *Purge season 2 of The Expanse: deletes 3 episode files on disk and removes 2 torrents with their data… That is the last of the show: the show itself is removed from Sonarr, Jellyseerr, Bazarr and Jellyfin as well.* — and the toast afterwards says what happened. Every write is one line in the container log (`docker logs controllarr`: user, role, action, target, result, duration).
+Anything destructive opens a dialog whose text **the server writes with the real counts** (with [incognito](#incognito) on it writes the same counts and leaves the names out) — *Purge season 2 of The Expanse: deletes 3 episode files on disk and removes 2 torrents with their data… That is the last of the show: the show itself is removed from Sonarr, Jellyseerr, Bazarr and Jellyfin as well.* — and the toast afterwards says what happened. Every write is one line in the container log (`docker logs controllarr`: user, role, action, target, result, duration).
 
 ## Settings
 

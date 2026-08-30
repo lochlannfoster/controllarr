@@ -3,6 +3,7 @@
 // CPU, memory, what it is doing right now and its last log line. The open/closed state is remembered per browser.
 import { h, clear, append, patchList, fmt } from './dom.js';
 import { pill, errorState } from './ui.js';
+import * as incog from './incognito.js';
 
 const WORDS = {   // [ok, warn, danger] — the word the figure earns at each level
   cpu: ['fine', 'busy', 'maxed out'], io: ['fine', 'waiting on disk', 'disk saturated'], load: ['fine', 'high', 'overloaded'],
@@ -28,6 +29,9 @@ export function createSystem(host, ctx) {
   const pct = v => v == null ? '—' : v + ' %';
   function render(d) {
     const H = d.host || {}; const worst = [];
+    // incognito: a container's last log line is where a file name turns up, and it cannot be pseudonymised
+    // sensibly — half a path is still a leak — so the whole line is held back while the switch is on.
+    const hideLog = incog.isOn();
     // note: what the headline says beside the word, so "disk filling up" also says how much is left
     const add = (key, label, val, lvl, title, note = '') => { if (lvl >= 1) worst.push([lvl, `${label} ${WORDS[key][lvl]}${note ? ' (' + note + ')' : ''}`]); return chip(key, label, val, lvl, title); };
     append(clear(line),
@@ -47,12 +51,13 @@ export function createSystem(host, ctx) {
     headline.firstChild.textContent = top.length ? (top[0][0] === 2 ? '✕' : '▲') : '●';
     headline.lastChild.textContent = top.length ? top.map(x => x[1]).slice(0, 3).join(' · ') : 'all fine';
     patchList(tbody, rows, r => r.name, () => h('tr', {}), (tr, r) => {
-      const sig = [r.state, r.health, r.cpu_pct, r.mem_mb, r.task, r.log].join('|'); if (tr.dataset.sig === sig) return; tr.dataset.sig = sig;
+      const sig = [r.state, r.health, r.cpu_pct, r.mem_mb, r.task, r.log, incog.sig()].join('|'); if (tr.dataset.sig === sig) return; tr.dataset.sig = sig;
       const st = r.state === 'running' ? (r.health === 'unhealthy' ? pill('warn', 'unhealthy') : pill('ok', 'running')) : pill('danger', r.state);
       append(clear(tr), h('th', { scope: 'row', class: 'sys-name' }, r.name), h('td', {}, st),
         h('td', { class: 'mono' }, r.cpu_pct == null ? '—' : r.cpu_pct.toFixed(1) + ' %'), h('td', { class: 'mono' }, r.mem_mb == null ? '—' : r.mem_mb + ' MB'),
         h('td', { class: 'sys-task' }, r.task == null ? h('span', { class: 'muted' }, '—') : r.task),
-        h('td', { class: 'sys-log mono', title: r.log || null }, r.log || ''));
+        h('td', { class: 'sys-log mono', title: hideLog ? 'Held back while incognito is on: a log line often carries a file name' : (r.log || null) },
+          hideLog ? h('span', { class: 'muted' }, 'hidden') : (r.log || '')));
     });
     for (const el of detail.querySelectorAll('.state')) el.remove();
     const S = d.sources || {};

@@ -43,6 +43,15 @@ A stdlib `ThreadingHTTPServer` (`Handler`), sibling modules only; vanilla ES mod
 
 Values live only in `app/static/tokens.css`. Six core tokens and four semantic ones; status is always a colour **and** a word or glyph. Five states per widget: loading (skeletons), empty (the good news said out loud), partial (one row per failed source), error, stale (an age chip). The floor: 44 px targets on coarse pointers, 16 px inputs, a visible focus ring, focus traps with `Esc`, WCAG AA in both themes, axe clean with no exclusions. DOM through `h()` / `append()` only, never `innerHTML` with data; a row handler that re-renders on click tests `e.composedPath()`.
 
+### 3.1 Incognito (the render layer)
+
+`app/static/modules/incognito.js` is the switch behind the header's **Incognito** button ([what it covers](DASHBOARD.md#incognito)). It masks what a module *draws* and nothing else — no payload is rewritten, `panel_data` substitutes nothing, and every action body keeps the real id and the real title, so `do_action` logs the real target.
+
+- `mask(real, key)` / `who(real)` / `yr(year)` / `poster(url)` / `epLabel(label)` at each render site; `alias(key)` hashes (FNV-1a) into two words from its own lists and a number, so the pseudonym is stable, carries nothing of the input, and is keyed by `kind:id` wherever two views mean one thing.
+- `sig()` belongs in **every keyed-render signature** (`patchList` skips a row whose signature has not moved, so a flip would otherwise leave real names on screen). `onChange` in `app.js` redraws from the data the page is already holding rather than waiting for a poll.
+- Text the **server** composes needs its help: an attention item lists the real names its sentences carry in `subjects` (`Panel._subject`), and the client replaces exactly those; `/api/consequence` takes `incognito=1`, which tells `Panel.consequence` to leave out the names it would add from qBittorrent while every count stays.
+- A new render site is covered by `tests/e2e/incognito.spec.mjs`: it sweeps the rendered text plus every `title` / `aria-label` / `alt` / `placeholder` and fails on any name the fake stack owns.
+
 ## 4. Validation
 
 `tests/run.sh` boots Controllarr from the checkout against **`tests/fake_stack.py`** — one stdlib server per app plus a fake Docker socket, each implementing exactly the API subset Controllarr calls (unknown → 404) — through `tests/harness.py` (temp directories, its own config file, the server as a subprocess). No real service is ever touched.
@@ -53,7 +62,7 @@ Values live only in `app/static/tokens.css`. Six core tokens and four semantic o
 | `unit` | helpers, the config loader, `board_gen`, `Sources`, the VPN namespace check, consequence text, `settings_ops` readers | 1 s |
 | `api` | the auth gate, HTTP/1.1 invariants, 404 JSON, ETags, every section's contract, source failures, **what an install without a given service or without a Docker socket does**, capabilities, presets, every action's wiring and the three purge scopes — asserted on the fake's call log | 45 s |
 | `compose` | `docker compose config` on the shipped file | 1 s |
-| `e2e` / `a11y` | Playwright, headless Chromium: sign-in, the Dash, every section, the library, the season tree and episode dialog, groups, the system strip, Settings, the five widget states through the fake's `/_control`, confirmations, roles, and the phone floor. Every test fails on any console error or 4xx/5xx. axe on every surface | 90 s |
+| `e2e` / `a11y` | Playwright, headless Chromium: sign-in, the Dash, every section, the library, the season tree and episode dialog, groups, the system strip, Settings, the five widget states through the fake's `/_control`, confirmations, roles, incognito (the pseudonym's own properties, and a sweep for any real name left on the page), and the phone floor. Every test fails on any console error or 4xx/5xx. axe on every surface | 90 s |
 | `archive` | the committed `app/` boots and answers every section | 5 s |
 | `py312` | unit + api inside `python:3.12-alpine` | 15 s |
 
@@ -70,6 +79,7 @@ Setup: `npm ci && npx playwright install --with-deps chromium` (Node ≥ 18). Dr
 
 - **A service:** teach `fake_stack.py` its API subset first — a call the fake does not know answers 404 and the test fails loudly. Then `_SVC` in `controllarr.py`, an accessor and a source in `panel_data.py`, a prompt in `install.sh`, a row in the README table, and a page section in `docs/DASHBOARD.md`.
 - **An action:** a branch in `_do_action` returning `(ok, msg)`; register privileged ones in `_CAP_FOR`; anything destructive needs consequence text with real counts.
+- **A render site:** anything drawing a title, a poster, a person or a file name goes through `incognito.js` (§3.1), and its signature carries `sig()`.
 - **A route:** admin-only POSTs go in `_ADMIN_POST`; unknown `/api/` stays a JSON 404.
 
 ## 6. Conventions

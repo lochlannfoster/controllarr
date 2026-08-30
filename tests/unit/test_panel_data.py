@@ -88,6 +88,28 @@ class ConsequenceText(unittest.TestCase):
         t, txt = p.consequence({"action": "t_delete", "name": "N", "deleteFiles": True}, detail); self.assertIn("deleted too", txt)
         self.assertEqual(p.consequence({"action": "unknown"}, detail), ("unknown", ""))
 
+    def test_incognito_drops_the_names_the_server_adds_and_keeps_every_count(self):
+        """The page in incognito hands in a pseudonym; what the server must not do is add a real name of its own."""
+        tors = [{"name": "Arrival.2016.1080p.WEB-DL", "group": "Arrival", "state": "downloading"}, {"name": "B", "state": "stalledUP"}]
+        p = make_panel(torrents=lambda: tors)
+        detail = lambda kind, aid: {"torrents": [{"name": "Blade.Runner.2049.2017.1080p.BluRay.x264-GROUP"}], "sizeOnDisk": 5.3e9}
+        t, txt = p.consequence({"action": "blocklist_retry", "kind": "movie", "id": 2, "title": "Quiet Otter 41", "incognito": "1"}, detail)
+        self.assertEqual(t, "Blocklist & retry Quiet Otter 41")
+        self.assertNotIn("Blade", txt); self.assertIn("the current download", txt); self.assertIn("removes 1 torrent", txt)
+        t, txt = p.consequence({"action": "qall_pause", "incognito": "1"}, detail)
+        self.assertNotIn("Arrival", txt); self.assertIn("Stops 2 torrents — 1 downloading. Seeding stops", txt)
+        # off (the default), both still name what they are about
+        self.assertIn("Blade", p.consequence({"action": "blocklist_retry", "kind": "movie", "id": 2, "title": "X"}, detail)[1])
+        self.assertIn("Arrival", p.consequence({"action": "qall_pause"}, detail)[1])
+
+
+class AttentionSubjects(unittest.TestCase):
+    def test_every_real_name_in_an_item_is_listed_for_the_incognito_pass(self):
+        """Incognito substitutes in the browser; the server's only job is to say which words are a real name."""
+        s = panel_data.Panel._subject
+        self.assertEqual(s("The Expanse", "tv:12"), {"text": "The Expanse", "key": "tv:12", "who": False})
+        self.assertEqual(s("sam", who=True), {"text": "sam", "key": "sam", "who": True})
+
 
 if __name__ == "__main__":
     unittest.main()

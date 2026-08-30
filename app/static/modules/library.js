@@ -3,6 +3,7 @@
 import { h, $, $$, clear, append, patchList, setText, fmt } from './dom.js';
 import { pill, stageKind, applyCaps, modal, skeleton, emptyState, errorState, toast } from './ui.js';
 import { createEpisodes, subSearch } from './episodes.js';
+import * as incog from './incognito.js';
 
 const TIP = {
   t_top: 'Move this torrent to the front of the queue (pinned so the optimiser leaves it)', t_bottom: 'Move this torrent to the back of the queue',
@@ -53,27 +54,29 @@ export function createLibrary(host, ctx) {
   }
   function rowUpdate(n, it) {
     n._item = it;
-    const sig = JSON.stringify(it); if (n.dataset.sig === sig) return; n.dataset.sig = sig; n.dataset.stage = it.stage; n.dataset.kind = it.kind; n.dataset.id = it.id; n.dataset.title = (it.title || '').toLowerCase(); n.dataset.size = it.size || 0;
+    const sig = JSON.stringify(it) + incog.sig(); if (n.dataset.sig === sig) return; n.dataset.sig = sig; n.dataset.stage = it.stage; n.dataset.kind = it.kind; n.dataset.id = it.id; n.dataset.title = (it.title || '').toLowerCase(); n.dataset.size = it.size || 0;
+    // incognito: what the row DRAWS. it.title stays the real one, so the filter box and the palette still find it
+    const key = it.kind + ':' + it.id, title = incog.mask(it.title, key), poster = incog.poster(it.poster);
     const live = it.live;
     const detail = live ? `${live.prio ? 'queue #' + live.prio + ' · ' : ''}${live.pct} % · ${fmt.speed(live.dlspeed)} · ${live.seeds} seeds · ETA ${live.eta || '—'} · ratio ${Number(live.ratio).toFixed(2)}` : it.detail;
     // duration: a movie's runtime; a show's per-episode runtime and the hours on disk (episodes on disk × runtime)
     const dur = !it.runtime ? '' : it.kind === 'tv' ? `${it.runtime} min/ep${it.have ? ' · ' + fmt.duration(it.have * it.runtime) + ' on disk' : ''}` : fmt.duration(it.runtime);
-    const meta = [detail, it.size ? fmt.bytes(it.size) : '', dur, it.reason, it.who ? 'req: ' + it.who : ''].filter(Boolean);
+    const meta = [detail, it.size ? fmt.bytes(it.size) : '', dur, it.reason, it.who ? 'req: ' + incog.who(it.who) : ''].filter(Boolean);
     let sub = null;
     if (it.sub === 'ok') sub = pill('ok', 'subs', 'pill-sm'); else if (it.sub === 'missing') sub = pill('danger', 'no subs', 'pill-sm'); else if (it.sub && it.sub.missing) sub = pill('warn', `${it.sub.missing} subs missing`, 'pill-sm');
     const real = Number.isInteger(it.id);
     const sel = real ? h('label', { class: 'sel-wrap', title: it.kind === 'tv' ? 'Tick every episode of this show (then untick the ones you want to leave out)' : 'Select for a bulk action' },
-      h('input', { type: 'checkbox', class: 'sel', 'aria-label': 'Select ' + it.title, onchange: async e => { if (it.kind !== 'tv') return; e.target.indeterminate = false; if (e.target.checked && !n.querySelector(':scope > .expand')) await toggleExpand(n, it); episodes.selectAll(it, e.target.checked); } })) : h('span', { class: 'sel-wrap' });
+      h('input', { type: 'checkbox', class: 'sel', 'aria-label': 'Select ' + title, onchange: async e => { if (it.kind !== 'tv') return; e.target.indeterminate = false; if (e.target.checked && !n.querySelector(':scope > .expand')) await toggleExpand(n, it); episodes.selectAll(it, e.target.checked); } })) : h('span', { class: 'sel-wrap' });
     const wasChecked = n.querySelector('.sel')?.checked; const exp = n.querySelector(':scope > .expand');
     append(clear(n), sel,
       pill(stageKind(it.stage), it.stage, 'badge'),
-      it.poster ? h('img', { class: 'pos', src: it.poster + '?size=250', alt: '', loading: 'lazy', width: 32, height: 48 }) : h('span', { class: 'pos' }),
+      poster ? h('img', { class: 'pos', src: poster + '?size=250', alt: '', loading: 'lazy', width: 32, height: 48 }) : h('span', { class: 'pos' }),
       h('div', { class: 'info', role: real ? 'button' : null, tabindex: real ? '0' : null, title: real ? (it.kind === 'tv' ? TIP.row_tv : TIP.row_movie) : null, 'aria-expanded': it.kind === 'tv' && real ? String(!!exp) : null },
-        h('div', { class: 't' }, h('span', { class: 'title' }, it.title), it.year ? h('span', { class: 'yr' }, ` (${it.year})`) : null, sub ? ' ' : null, sub),
+        h('div', { class: 't' }, h('span', { class: 'title' }, title), incog.yr(it.year) ? h('span', { class: 'yr' }, ` (${it.year})`) : null, sub ? ' ' : null, sub),
         h('div', { class: 'm mono' }, meta.join(' · ')),
         live && live.why ? h('div', { class: 'why' }, h('span', { class: 'glyph', 'aria-hidden': 'true' }, '▲'), live.why) : null,
         live ? h('div', { class: 'pbar', role: 'progressbar', 'aria-label': 'Download progress', 'aria-valuenow': live.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: { width: live.pct + '%' } })) : null),
-      real ? h('button', { type: 'button', class: 'openx', 'aria-label': `Controls for ${it.title}`, title: TIP.openx, onclick: e => { e.stopPropagation(); openDrawer(it.kind, it.id, e.currentTarget); } }, '›') : h('span', { class: 'openx', 'aria-hidden': 'true' }, ''),
+      real ? h('button', { type: 'button', class: 'openx', 'aria-label': `Controls for ${title}`, title: TIP.openx, onclick: e => { e.stopPropagation(); openDrawer(it.kind, it.id, e.currentTarget); } }, '›') : h('span', { class: 'openx', 'aria-hidden': 'true' }, ''),
       exp);
     if (wasChecked) n.querySelector('.sel').checked = true;
   }
@@ -134,7 +137,7 @@ export function createLibrary(host, ctx) {
     let extra = {};
     if (action === 'monitor_on' || action === 'monitor_off') { extra = { monitored: action === 'monitor_on' }; action = 'monitor_set'; }
     if (action === 'purge') {
-      const ok = await ctx.confirm({ title: `Purge ${items.length} title${items.length > 1 ? 's' : ''}`, text: `Deletes their files, torrents and Jellyseerr requests: ${items.map(i => i.title).slice(0, 5).join(', ')}${items.length > 5 ? '…' : ''}. Can't be undone.`, verb: 'Purge', danger: true });
+      const ok = await ctx.confirm({ title: `Purge ${items.length} title${items.length > 1 ? 's' : ''}`, text: `Deletes their files, torrents and Jellyseerr requests: ${items.map(i => incog.mask(i.title, i.kind + ':' + i.id)).slice(0, 5).join(', ')}${items.length > 5 ? '…' : ''}. Can't be undone.`, verb: 'Purge', danger: true });
       if (!ok) return;
     }
     let bad = 0;
@@ -146,12 +149,12 @@ export function createLibrary(host, ctx) {
   // ---- release picker / quality picker
   async function releasePicker(item, season) {
     const body = h('div', {}, skeleton(4));
-    const dlg = modal(`Releases: ${item.title}${season ? ' — season ' + season : ''}`, body, { wide: true });
+    const dlg = modal(`Releases: ${incog.mask(item.title, item.kind + ':' + item.id)}${season ? ' — season ' + season : ''}`, body, { wide: true });
     try {
       const rs = await (await fetch(`/api/releases?kind=${item.kind}&id=${item.id}${season ? '&season=' + season : ''}`)).json();
       clear(body);
       if (!rs.length) body.append(emptyState('No releases found right now.'));
-      for (const r of rs) body.append(h('div', { class: 'rel' }, h('div', { class: 'g' }, pill(r.rejected ? 'danger' : 'ok', r.rejected ? 'rejected' : 'ok', 'pill-sm'), ' ', h('span', {}, r.title),
+      for (const r of rs) body.append(h('div', { class: 'rel' }, h('div', { class: 'g' }, pill(r.rejected ? 'danger' : 'ok', r.rejected ? 'rejected' : 'ok', 'pill-sm'), ' ', h('span', {}, incog.mask(r.title)),
         h('div', { class: 'muted mono' }, `${r.quality} · ${(r.size / 1e9).toFixed(2)} GB · ${r.seeders} seeders${r.rejections?.length ? ' · ' + r.rejections[0] : ''}`)),
         h('button', { type: 'button', class: 'btn btn-sm btn-primary', dataset: { cap: 'can_grab' }, title: 'Send this exact release to qBittorrent', onclick: async () => { const j = await ctx.post({ action: 'grab', guid: r.guid, indexerId: r.indexerId, kind: item.kind, id: item.id, title: item.title }); toast(j.message, j.ok ? 'ok' : 'error'); dlg.close(); ctx.refresh('board', 'live'); } }, 'Grab')));
       applyCaps(body, ctx.caps);
@@ -160,7 +163,7 @@ export function createLibrary(host, ctx) {
   async function qualityPicker(item) {
     const ps = await (await fetch('/api/qualityprofiles?kind=' + item.kind)).json();
     const sel = h('select', { 'aria-label': 'Quality profile' }, ps.map(p => h('option', { value: p.id }, p.name)));
-    const dlg = modal('Quality profile: ' + item.title, h('div', { class: 'dlg-row' }, sel, h('button', { type: 'button', class: 'btn btn-primary', onclick: async () => { const j = await ctx.post({ action: 'set_quality', profileId: sel.value, kind: item.kind, id: item.id, title: item.title }); toast(j.message, j.ok ? 'ok' : 'error'); dlg.close(); ctx.refresh('board'); } }, 'Set')));
+    const dlg = modal('Quality profile: ' + incog.mask(item.title, item.kind + ':' + item.id), h('div', { class: 'dlg-row' }, sel, h('button', { type: 'button', class: 'btn btn-primary', onclick: async () => { const j = await ctx.post({ action: 'set_quality', profileId: sel.value, kind: item.kind, id: item.id, title: item.title }); toast(j.message, j.ok ? 'ok' : 'error'); dlg.close(); ctx.refresh('board'); } }, 'Set')));
   }
 
   // ---- drawer
@@ -191,8 +194,8 @@ export function createLibrary(host, ctx) {
     clear(dwEl);
     if (!D || !D.id) { dwEl.append(h('div', { class: 'dwhead' }, h('div', { class: 'dt' }, 'Not found'), h('button', { type: 'button', class: 'btn btn-icon dwx', 'aria-label': 'Close', onclick: () => dwEl.close() }, '×'))); return; }
     const head = h('div', { class: 'dwhead' },
-      D.poster ? h('img', { class: 'pos pos-lg', src: `/img/poster/${D.kind}/${D.id}?size=250`, alt: '' }) : h('span', { class: 'pos pos-lg' }),
-      h('div', {}, h('div', { class: 'dt', id: 'dw-title' }, D.title + (D.year ? ` (${D.year})` : '')), h('div', { style: { marginTop: '6px' } }, pill(stageKind(D.stage), D.stage || '—', 'badge'), D.sizeOnDisk ? h('span', { class: 'mono muted' }, ' ' + fmt.bytes(D.sizeOnDisk) + ' on disk') : null)),
+      incog.poster(D.poster) ? h('img', { class: 'pos pos-lg', src: `/img/poster/${D.kind}/${D.id}?size=250`, alt: '' }) : h('span', { class: 'pos pos-lg' }),
+      h('div', {}, h('div', { class: 'dt', id: 'dw-title' }, incog.mask(D.title, D.kind + ':' + D.id) + (incog.yr(D.year) ? ` (${D.year})` : '')), h('div', { style: { marginTop: '6px' } }, pill(stageKind(D.stage), D.stage || '—', 'badge'), D.sizeOnDisk ? h('span', { class: 'mono muted' }, ' ' + fmt.bytes(D.sizeOnDisk) + ' on disk') : null)),
       h('button', { type: 'button', class: 'btn btn-icon dwx', 'aria-label': 'Close', onclick: () => dwEl.close() }, '×'));
     dwEl.setAttribute('aria-labelledby', 'dw-title');
     const sec = (title, ...kids) => h('section', { class: 'dwsec' }, h('h4', {}, title), ...kids);
@@ -228,22 +231,24 @@ export function createLibrary(host, ctx) {
       h('button', { type: 'button', class: 'btn btn-danger-ghost', title: tip('purge'), dataset: { cap: 'can_purge' }, onclick: () => drawerAct('purge', {}, { confirm: true }) }, 'Purge')));
     const tors = D.torrents || [];
     const torSec = sec(`Torrents (${tors.length})`, ...(tors.length ? tors.map(t => h('div', { class: 'tor tor-inline' },
-      h('div', { class: 'tn' }, t.name), h('div', { class: 'tm mono' }, `${t.state} · ${t.progress} % · queue ${t.priority > 0 ? '#' + t.priority : '—'} · ↓${fmt.speed(t.dlspeed)} ↑${fmt.speed(t.upspeed)} · ${t.num_seeds} seeds · ratio ${t.ratio} · ETA ${t.eta}`),
+      h('div', { class: 'tn' }, incog.mask(t.name)), h('div', { class: 'tm mono' }, `${t.state} · ${t.progress} % · queue ${t.priority > 0 ? '#' + t.priority : '—'} · ↓${fmt.speed(t.dlspeed)} ↑${fmt.speed(t.upspeed)} · ${t.num_seeds} seeds · ratio ${t.ratio} · ETA ${t.eta}`),
       t.why ? h('div', { class: 'why' }, h('span', { class: 'glyph', 'aria-hidden': 'true' }, '▲'), t.why) : null,
       h('div', { class: 'dwbtns' }, ...[['t_top', 'Top'], ['t_bottom', 'Bottom'], ['t_pause', 'Pause'], ['t_resume', 'Resume'], ['t_recheck', 'Recheck'], ['t_reannounce', 'Reannounce']].map(([a, l]) => h('button', { type: 'button', class: 'btn btn-sm', title: tip(a), onclick: () => tAct(a, t.hash) }, l)),
         h('button', { type: 'button', class: 'btn btn-sm', title: tip('t_forcestart'), dataset: { cap: 'can_control_client' }, onclick: () => tAct('t_forcestart', t.hash, { value: t.force_start ? 0 : 1 }) }, t.force_start ? 'Unforce' : 'Force start'),
-        h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: tip('t_delete'), dataset: { cap: 'can_remove' }, onclick: () => tAct('t_delete', t.hash, { name: t.name }, true) }, 'Remove'),
-        h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: tip('t_purge'), dataset: { cap: 'can_purge' }, onclick: () => tAct('t_purge', t.hash, { name: t.name }, true) }, 'Purge')),
+        h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: tip('t_delete'), dataset: { cap: 'can_remove' }, onclick: () => tAct('t_delete', t.hash, { name: t.name }, true, { name: incog.mask(t.name) }) }, 'Remove'),
+        h('button', { type: 'button', class: 'btn btn-sm btn-danger-ghost', title: tip('t_purge'), dataset: { cap: 'can_purge' }, onclick: () => tAct('t_purge', t.hash, { name: t.name }, true, { name: incog.mask(t.name) }) }, 'Purge')),
       h('div', { class: 'dwrow', dataset: { cap: 'can_control_client' } }, h('label', { title: 'Per-torrent download speed cap' }, '↓ cap'), h('input', { class: 'spin', type: 'number', min: 0, step: 0.5, value: t.dl_limit, inputmode: 'decimal', 'aria-label': 'Download cap, MB/s', onchange: e => tAct('t_dllimit', t.hash, { limit: e.target.value }) }),
         h('label', { title: 'Per-torrent upload speed cap' }, '↑ cap'), h('input', { class: 'spin', type: 'number', min: 0, step: 0.5, value: t.up_limit, inputmode: 'decimal', 'aria-label': 'Upload cap, MB/s', onchange: e => tAct('t_uplimit', t.hash, { limit: e.target.value }) }), h('span', { class: 'muted' }, 'MB/s, 0 = ∞')))) : [h('div', { class: 'muted' }, 'No active torrents for this title.')]));
     dwEl.append(head, quality, mon, subs, lib, torSec);
     applyCaps(dwEl, ctx.caps);
     if (!dwEl.contains(document.activeElement) || document.activeElement === dwEl) dwEl.querySelector('.dwx').focus();   // re-render must not drop focus to <body>
   }
-  async function tAct(a, hash, extra = {}, confirm = false) { const j = await ctx.runAction({ confirm, body: Object.assign({ action: a, hash }, extra) }); if (j !== false) { setTimeout(refreshDrawer, 500); ctx.refresh('live', 'board'); } }
+  async function tAct(a, hash, extra = {}, confirm = false, shown = null) { const j = await ctx.runAction({ confirm, body: Object.assign({ action: a, hash }, extra), shown }); if (j !== false) { setTimeout(refreshDrawer, 500); ctx.refresh('live', 'board'); } }
 
   return {
     setData(d) { state.data = d; render(); },
+    /** Incognito flipped: everything already on screen is drawn again, the open drawer and season trees too. */
+    redraw() { render(); episodes.redrawAll(); if (DW) refreshDrawer(); },
     setStage(st) { state.stage = st === state.stage ? '' : st; stageSel.value = state.stage; render(); syncHash(); },
     setSort(st, so) { state.sort[st] = so; if (st === 'Available') { state.sort['Available-movie'] = so; state.sort['Available-tv'] = so; } render(); },
     stage() { return state.stage; },

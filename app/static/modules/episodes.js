@@ -4,6 +4,7 @@
 // in the drawer's Monitoring section: one implementation, two hosts.
 import { h, clear, append, fmt } from './dom.js';
 import { pill, modal, skeleton, emptyState, errorState, applyCaps, toast } from './ui.js';
+import * as incog from './incognito.js';
 
 const TIP = {
   season_tick: 'Tick every episode of this season', season_monitor: 'Track this season (Sonarr searches for it) or stop tracking it',
@@ -20,6 +21,8 @@ const TIP = {
 };
 const tip = k => TIP[k] || null;
 const epCode = e => `S${String(e.season).padStart(2, '0')}E${String(e.ep || 0).padStart(2, '0')}`;
+const showName = item => incog.mask(item.title, 'tv:' + item.id);            // the show, as this module prints it
+const epName = (item, e) => incog.mask(e.title, `ep:${item.id}:${e.id}`);    // one pseudonym per episode, stable
 const torState = t => !t ? null : /stalled|metaDL/.test(t.state) && t.progress < 100 ? pill('danger', 'stalled', 'pill-sm') : t.progress >= 100 ? pill('ok', 'downloaded', 'pill-sm') : pill('flow', `${t.progress ?? 0} %`, 'pill-sm');
 // the subtitle word for an episode on disk: Bazarr's verdict, or nothing while Bazarr has not seen the file
 const subState = e => !e.hasFile || e.sub == null ? null : e.sub ? pill('ok', 'subs', 'pill-sm') : pill('warn', 'no subs', 'pill-sm');
@@ -34,7 +37,7 @@ export function createEpisodes(ctx, { releasePicker }) {
     return d;
   }
   const act = async (item, body, confirm = false) => { const j = await ctx.runAction({ confirm, body: Object.assign({ kind: 'tv', id: item.id, title: item.title }, body) }); if (j !== false) ctx.refresh('board', 'live', 'attention'); return j; };
-  const tAct = (a, hashes, item, extra = {}, confirm = false) => ctx.runAction({ confirm, body: Object.assign({ action: a, hash: hashes, name: item.title }, extra) });
+  const tAct = (a, hashes, item, extra = {}, confirm = false) => ctx.runAction({ confirm, body: Object.assign({ action: a, hash: hashes, name: item.title }, extra), shown: { name: showName(item) } });
   function state(item) { let st = trees.get(item.id); if (!st) { st = { data: null, open: new Set(), showAll: false, sel: new Set(), hosts: new Set(), item, onSelection: null }; trees.set(item.id, st); } return st; }
   function notify(st) { const total = (st.data?.episodes || []).length; st.onSelection && st.onSelection(st.sel.size, total); }
 
@@ -69,7 +72,7 @@ export function createEpisodes(ctx, { releasePicker }) {
           if (!eps.length) list.append(h('div', { class: 'muted' }, 'No episodes.'));
           for (const e of eps) list.append(h('div', { class: 'ep' + (e.monitored ? '' : ' ep-off') + (st.sel.has(e.id) ? ' ep-on' : '') },
             h('input', { type: 'checkbox', class: 'ep-sel', checked: st.sel.has(e.id), 'aria-label': `Tick ${epCode(e)}`, title: tip('ep_tick'), onchange: ev => { ev.target.checked ? st.sel.add(e.id) : st.sel.delete(e.id); draw(); notify(st); } }),
-            h('span', { class: 'mono ep-code' }, epCode(e)), h('span', { class: 'ep-title ell' }, e.title || ''),
+            h('span', { class: 'mono ep-code' }, epCode(e)), h('span', { class: 'ep-title ell' }, e.title ? epName(item, e) : ''),
             e.size ? h('span', { class: 'mono muted ep-size', title: 'Size of the file on disk' }, fmt.bytes(e.size)) : null,
             e.torrent ? torState(e.torrent) : e.hasFile ? pill('ok', 'file', 'pill-sm') : pill('muted', e.monitored ? 'missing' : 'ignored', 'pill-sm'),
             subState(e),
@@ -93,7 +96,7 @@ export function createEpisodes(ctx, { releasePicker }) {
     const after = async (j, keep = true) => { if (j === false) return; if (!keep) st.sel.clear(); await reload(); };
     bar.append(h('span', { class: 'ep-bar-n' }, h('b', { class: 'mono' }, n), n === 1 ? ' episode' : ' episodes'),
       btn('Search', 'search', async () => after(await act(item, { action: 'episode_search', episodeIds: ids }))),
-      btn('Subs', 'subs', async () => { if (n === 1) { const box = h('div', { class: 'submanual' }); modal(`Subtitles for ${item.title} ${epCode(eps[0])}`, box, { wide: true }); subSearch(ctx, 'tv', item.id, eps[0].id, box); } else after(await act(item, { action: 'fetch_subs' })); }),
+      btn('Subs', 'subs', async () => { if (n === 1) { const box = h('div', { class: 'submanual' }); modal(`Subtitles for ${showName(item)} ${epCode(eps[0])}`, box, { wide: true }); subSearch(ctx, 'tv', item.id, eps[0].id, box); } else after(await act(item, { action: 'fetch_subs' })); }),
       btn('Track', 'track', async () => after(await act(item, { action: 'episode_monitor', episodeIds: ids, monitored: true }))),
       btn('Untrack', 'untrack', async () => after(await act(item, { action: 'episode_monitor', episodeIds: ids, monitored: false }))),
       h('span', { class: 'ep-bar-gap' }),
@@ -112,7 +115,7 @@ export function createEpisodes(ctx, { releasePicker }) {
   /** The per-episode dialog behind ›: status, tracking, search, subtitles, file, purge, and the torrent behind it. */
   function episodeDialog(item, ep, onChange) {
     const body = h('div', { class: 'ep-dlg' }); let cur = ep;
-    const dlg = modal(`${item.title} — ${epCode(ep)}${ep.title ? ' ' + ep.title : ''}`, body);
+    const dlg = modal(`${showName(item)} — ${epCode(ep)}${ep.title ? ' ' + epName(item, ep) : ''}`, body);
     const subhost = h('div', { class: 'submanual' });
     async function refresh() { try { const d = await load(item.id); cur = (d.episodes || []).find(e => e.id === ep.id) || cur; } catch {} draw(); onChange && onChange(); }
     const run = async (b, confirm) => { const j = await act(item, b, confirm); if (j !== false) refresh(); };
@@ -138,6 +141,8 @@ export function createEpisodes(ctx, { releasePicker }) {
 
   return {
     seriesTree, episodeDialog,
+    /** Incognito flipped: redraw every season tree that is open, wherever it is hosted. */
+    redrawAll() { for (const st of trees.values()) st.draw && st.draw(); },
     /** Tick or untick every episode of a show (the series row's own checkbox). */
     selectAll(item, on) { const st = state(item); if (!st.data) return; for (const e of st.data.episodes || []) on ? st.sel.add(e.id) : st.sel.delete(e.id); if (on) for (const s of st.data.seasons || []) if (s.monitored) st.open.add(s.season); st.draw && st.draw(); notify(st); },
     selection(item) { const st = trees.get(item.id); return st ? st.sel.size : 0; },
@@ -153,6 +158,6 @@ export async function subSearch(ctx, kind, id, episodeId, host) {
   clear(host);
   if (!j.available) return host.append(errorState('Bazarr manual search unavailable', 'Bazarr did not answer'));
   if (!j.results.length) return host.append(emptyState('No subtitles found right now.'));
-  for (const r of j.results) host.append(h('div', { class: 'rel' }, h('div', { class: 'g' }, `${r.language || '?'} · ${r.provider || ''} · score ${r.score || 0}`, h('div', { class: 'muted mono' }, r.release || '')),
+  for (const r of j.results) host.append(h('div', { class: 'rel' }, h('div', { class: 'g' }, `${r.language || '?'} · ${r.provider || ''} · score ${r.score || 0}`, h('div', { class: 'muted mono' }, r.release ? incog.mask(String(r.release)) : '')),
     h('button', { type: 'button', class: 'btn btn-sm', title: 'Download this subtitle through Bazarr', onclick: async () => { const res = await ctx.post({ action: 'download_sub', kind, id, episodeId, language: r.language, subtitle: r.subtitle, provider: r.provider, hi: String(!!r.hi), forced: String(!!r.forced), original_format: String(!!r.original_format) }); toast(res.message || (res.ok ? 'Done' : 'Failed'), res.ok ? 'ok' : 'error'); clear(host); } }, 'Get')));
 }

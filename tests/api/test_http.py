@@ -166,6 +166,32 @@ class Sections(unittest.TestCase):
         st, cq = self.json("/api/consequence?action=episode_purge&kind=tv&id=12&episodeIds=1201&title=The+Expanse")
         self.assertEqual(cq["title"], "Purge S02E01 of The Expanse"); self.assertIn("1 torrent", cq["text"])
         st, cq = self.json("/api/consequence?action=config_preset&name=Overclock"); self.assertEqual(cq["title"], "Apply preset Overclock"); self.assertIn("No speed limits", cq["text"])
+    def test_incognito_redacts_the_confirmation_but_never_the_log_line(self):
+        """A page drawing pseudonyms hands one in; the server must not put a real name back — and the write
+        that follows is still logged against the real target (docs/DASHBOARD.md, Incognito)."""
+        st, cq = self.json("/api/consequence?action=blocklist_retry&kind=movie&id=2&title=Quiet+Otter+41&incognito=1")
+        self.assertEqual(cq["title"], "Blocklist & retry Quiet Otter 41")
+        self.assertNotIn("Blade", cq["text"]); self.assertIn("the current download", cq["text"]); self.assertIn("torrent", cq["text"])
+        st, cq = self.json("/api/consequence?action=qall_pause&incognito=1")
+        self.assertNotIn("Arrival", cq["text"]); self.assertNotIn("Blade", cq["text"])
+        self.assertIn("Stops 4 torrents", cq["text"])                                       # every count survives
+        st, cq = self.json("/api/consequence?action=qall_pause"); self.assertIn("Blade", cq["text"])   # switched off it names them
+        st, j = self.h.post("/api/action", {"action": "retry", "kind": "movie", "id": 2, "title": "Quiet Otter 41"}, self.c)
+        self.assertTrue(j["ok"], j)
+        self.assertIn("action=retry target=movie:2", self.h.panel_log())
+    def test_attention_items_name_the_words_incognito_has_to_replace(self):
+        """The substitution happens in the browser; the server only says which words are a real name."""
+        st, j = self.json("/api/attention")
+        subj = {i["kind"]: i.get("subjects") for i in j["items"]}
+        self.assertEqual(subj["stalled"], [{"text": "Blade Runner 2049", "key": "movie:2", "who": False}])
+        self.assertEqual(subj["import"], [{"text": "The.Expanse.S02E01.1080p", "key": "tv:12", "who": False}])
+        self.assertEqual(subj["request"], [{"text": "sam", "key": "sam", "who": True}])
+        self.assertEqual(subj["unavailable"], [{"text": "Coherence", "key": "movie:3", "who": False},
+                                               {"text": "sam", "key": "sam", "who": True}])   # its requester too
+        for kind, subs in subj.items():                      # every listed word really is in the item it belongs to
+            i = next(x for x in j["items"] if x["kind"] == kind)
+            for sub in subs or []:
+                self.assertIn(sub["text"], " ".join([i["title"], i.get("detail") or ""] + (i.get("facts") or [])), kind)
 
 
 class SourceFailures(unittest.TestCase):

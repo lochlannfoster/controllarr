@@ -7,6 +7,7 @@ import { renderAttention, renderLive, renderReference } from './modules/sections
 import { createLibrary } from './modules/library.js';
 import { createSystem } from './modules/system.js';
 import { initTips } from './modules/tips.js';
+import * as incog from './modules/incognito.js';
 
 const CFG = window.MC || {};
 const prefs = initPrefs();
@@ -20,13 +21,24 @@ async function post(body) {
     return await r.json();
   } catch (e) { return { ok: false, message: 'The panel did not answer — ' + (e.message || e) }; }
 }
+// What the confirmation asks the server about. The POST below still carries the real title and the real id —
+// only this copy is pseudonymised, and `incognito=1` tells the server to leave its own names out of the prose
+// it writes. `a.shown` is what the row that fired the action actually displays, when that is keyed differently.
+function consequenceOf(a) {
+  const b = { ...a.body };
+  if (!incog.isOn()) return b;
+  const key = b.kind && b.id != null ? `${b.kind}:${b.id}` : null;
+  if (b.title != null) b.title = incog.mask(b.title, key || b.title);
+  if (b.name != null) b.name = incog.mask(b.name, key || b.name);
+  return { ...b, ...(a.shown || {}), incognito: 1 };
+}
 async function runAction(a, item) {
   if (a.open) { library.openDrawer(a.open.kind, a.open.id); return false; }
   if (a.jump) { navigate(a.jump); return false; }
   const body = a.body; if (!body) return false;
   if (a.confirm || body.action === 'purge') {
     let c = { title: body.action, text: '' };
-    try { const q = new URLSearchParams(Object.entries(body).filter(([k, v]) => v != null && typeof v !== 'object').map(([k, v]) => [k, String(v)])); c = await (await fetch('/api/consequence?' + q)).json(); } catch {}
+    try { const q = new URLSearchParams(Object.entries(consequenceOf(a)).filter(([k, v]) => v != null && typeof v !== 'object').map(([k, v]) => [k, String(v)])); c = await (await fetch('/api/consequence?' + q)).json(); } catch {}
     const ok = await confirmDialog({ title: c.title || body.action, text: c.text, verb: (c.title || 'Confirm').split(' ')[0], danger: /purge|delete|remove|decline|blocklist/i.test(body.action) });
     if (!ok) return false;
   }
@@ -43,10 +55,24 @@ const ctx = {
 };
 
 // ---- header controls
-const themeBtn = $('#theme'), densBtn = $('#density');
-function labelPrefs() { setText(themeBtn, { auto: 'Theme: auto', dark: 'Theme: dark', light: 'Theme: light' }[prefs.theme()]); setText(densBtn, prefs.density() === 'compact' ? 'Compact' : 'Comfortable'); densBtn.setAttribute('aria-pressed', String(prefs.density() === 'compact')); }
+const themeBtn = $('#theme'), densBtn = $('#density'), incogBtn = $('#incognito');
+function labelPrefs() {
+  setText(themeBtn, { auto: 'Theme: auto', dark: 'Theme: dark', light: 'Theme: light' }[prefs.theme()]); setText(densBtn, prefs.density() === 'compact' ? 'Compact' : 'Comfortable'); densBtn.setAttribute('aria-pressed', String(prefs.density() === 'compact'));
+  setText(incogBtn, incog.isOn() ? 'Incognito on' : 'Incognito'); incogBtn.setAttribute('aria-pressed', String(incog.isOn()));
+}
 themeBtn.addEventListener('click', () => { prefs.cycleTheme(); labelPrefs(); });
 densBtn.addEventListener('click', () => { prefs.toggleDensity(); labelPrefs(); });
+incogBtn.addEventListener('click', () => { incog.toggle(); labelPrefs(); });
+// Flipping it redraws everything already on screen from the data the page is holding — waiting for the next
+// poll would leave real names up for seconds. Pickers and per-episode dialogs close: they are transient, and
+// re-rendering one under the pointer is worse than reopening it.
+incog.onChange(() => {
+  for (const d of $$('dialog')) if (!d.classList.contains('drawer')) d.close();
+  if (lastAttention) renderAttention($('#attention'), lastAttention, ctx);
+  if (lastLive) renderLive($('#live'), lastLive, ctx);
+  library.redraw();
+  const sys = sched.get('system'); if (sys && sys.data) system.render(sys.data);
+});
 labelPrefs();
 initTips($('#help'));
 applyCaps(document, ctx.caps);
@@ -165,11 +191,12 @@ function openPalette() {
     { label: 'Test all indexers', kind: 'action', cap: 'can_control_client', run: () => runAction({ body: { action: 'indexers_test_all' } }) },
     { label: 'Scan Jellyfin library', kind: 'action', cap: 'can_control_client', run: () => runAction({ body: { action: 'jf_scan' } }) },
     ...(ctx.role === 'admin' ? [{ label: 'Settings', kind: 'page', run: () => { location.href = '/settings'; } }] : []),
-    ...library.items().filter(i => Number.isInteger(i.id)).map(i => ({ label: `${i.title}${i.year ? ' (' + i.year + ')' : ''}`, kind: i.stage, run: () => library.openDrawer(i.kind, i.id) })),
+    ...library.items().filter(i => Number.isInteger(i.id)).map(i => ({ label: `${incog.mask(i.title, i.kind + ':' + i.id)}${incog.yr(i.year) ? ' (' + i.year + ')' : ''}`, search: `${i.title} ${i.year || ''}`, kind: i.stage, run: () => library.openDrawer(i.kind, i.id) })),
   ].filter(c => !c.cap || ctx.caps[c.cap]);
   let sel = 0;
   function draw() {
-    const q = input.value.trim().toLowerCase(); const hits = (q ? cmds.filter(c => c.label.toLowerCase().includes(q)) : cmds).slice(0, 12);
+    // searched against the real title even in incognito: you know your own library, the screen does not have to show it
+    const q = input.value.trim().toLowerCase(); const hits = (q ? cmds.filter(c => (c.search || c.label).toLowerCase().includes(q)) : cmds).slice(0, 12);
     clear(list); sel = Math.min(sel, Math.max(0, hits.length - 1));
     hits.forEach((c, i) => list.append(h('button', { type: 'button', role: 'option', class: 'pal-item' + (i === sel ? ' is-sel' : ''), 'aria-selected': String(i === sel), onclick: () => { dlg.close(); c.run(); } }, h('span', {}, c.label), h('span', { class: 'muted mono' }, c.kind))));
     list._hits = hits;
