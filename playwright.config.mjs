@@ -5,6 +5,9 @@ import { defineConfig, devices } from '@playwright/test';
 
 const PORT = process.env.MC_E2E_PORT || '3999';
 const BASE = `http://127.0.0.1:${PORT}`;
+// An image that preinstalls Chromium (Claude Code on the web) may carry a build this Playwright
+// version does not expect. PW_CHROMIUM_PATH points at that binary; unset locally, so no effect.
+const CHROMIUM = process.env.PW_CHROMIUM_PATH || '';
 
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -23,6 +26,7 @@ export default defineConfig({
     baseURL: BASE, headless: true, colorScheme: 'dark', locale: 'en-GB', timezoneId: 'UTC',
     actionTimeout: 6_000, navigationTimeout: 10_000,
     screenshot: 'only-on-failure', trace: 'retain-on-failure', video: 'off',
+    ...(CHROMIUM ? { launchOptions: { executablePath: CHROMIUM } } : {}),
   },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } }, testIgnore: /responsive/ },

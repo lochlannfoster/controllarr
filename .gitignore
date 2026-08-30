@@ -6,8 +6,15 @@ install-*.log
 uninstall-*.log
 
 # --- AI-assistant working files (owner: the repo stays clean for anyone who clones it) ---
-.claude/
+# Personal instructions and assistant state stay out; the shared, public version of anything an
+# assistant needs is docs/DEVELOPMENT.md. Two files under .claude/ ARE tracked because they are
+# project plumbing, not private notes: the startup hook and the settings that register it.
+# (A directory ignored as `.claude/` cannot have its contents un-ignored — hence `.claude/*`.)
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 CLAUDE.md
+CLAUDE.local.md
 
 # --- test tooling (tests/ and the Playwright config ARE committed; their outputs and deps are not) ---
 node_modules/

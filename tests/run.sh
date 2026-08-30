@@ -67,7 +67,7 @@ for p in sys.argv[1:]:
     node --input-type=module --check < "$f" || { echo "$f"; rc=1; }
   done
   echo "== markdown links"; for f in "$R"/README.md "$R"/docs/*.md "$R"/docs/services/*.md; do [ -f "$f" ] && { python3 -I "$T/lib/md-links.py" "$f" || rc=1; }; done
-  echo "== json"; for f in "$R"/package.json; do python3 -I -c 'import json,sys; json.load(open(sys.argv[1]))' "$f" || rc=1; done
+  echo "== json"; python3 -I -c 'import json,sys; json.load(open(sys.argv[1]))' "$R/package.json" || rc=1
   return $rc
 }
 stage_unit() { (cd "$T" && python3 -I -m unittest discover -s unit -t . -v 2>&1); }
