@@ -49,6 +49,7 @@ def write_config_dir(root, ports, sock_path, extra_env=None, backups_enabled=Fal
     app_env = os.path.join(root, "app.env")
     with open(app_env, "w") as f:
         for k, v in env.items(): f.write(f"{k}={v}\n")
+    os.chmod(app_env, 0o600)   # as install.sh writes it; the panel refuses to start on anything world-readable
     return app_env
 
 

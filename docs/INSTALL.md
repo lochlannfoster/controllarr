@@ -30,6 +30,9 @@ Nothing is stored twice: if Controllarr can read your apps' config directory it 
 
 1. Checks Docker, Compose and `python3`.
 2. Writes `.env` (compose values) and `<state directory>/controllarr.env` (mode 600 — addresses, keys, live knobs).
+   The file is created at 600 rather than tightened afterwards, and re-running the installer repairs the permissions
+   of an older install in place, without touching your answers. The panel refuses to start on a config anyone else
+   can read — see [CONFIGURATION.md ▸ Your keys](CONFIGURATION.md#your-keys).
 3. Generates `docker-compose.override.yml`: the networking choice and the optional read-only mounts.
 4. `docker compose up -d`, then waits for `/health` to answer.
 5. Prints the URL, the apps it connected to, and where its state lives.

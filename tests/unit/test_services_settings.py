@@ -24,6 +24,38 @@ class LoadEnv(unittest.TestCase):
         with mock.patch.dict(services.E, {"RADARR_APIKEY": "from-env"}): self.assertEqual(services.apikey("radarr"), "from-env")
 
 
+class SecretsAtRest(unittest.TestCase):
+    """The panel does not encrypt its keys and says why (services.py). What it does instead is enforced here:
+    the file is the owner's alone, and no secret survives a trip out of the panel."""
+    def test_a_world_readable_config_is_the_one_thing_that_stops_the_panel(self):
+        root = tempfile.mkdtemp(prefix="mc-perm-"); p = os.path.join(root, "app.env")
+        with open(p, "w") as f: f.write("RADARR_APIKEY=0123456789abcdef\n")
+        os.chmod(p, 0o600); self.assertEqual(services.config_problems(p), [])
+        os.chmod(p, 0o640); self.assertEqual(services.config_problems(p), [])          # a shared group is a choice, not a fault
+        os.chmod(p, 0o644); self.assertEqual(services.config_problems(p), [(p, 0o644)])
+        os.chmod(p, 0o602); self.assertEqual(services.config_problems(p), [(p, 0o602)])   # writable by anyone is worse
+        self.assertEqual(services.config_problems("/nonexistent/app.env"), [])          # nothing to judge yet
+    def test_redact_replaces_every_secret_and_nothing_else(self):
+        key = "radarr-test-key-0123"
+        with mock.patch.dict(services.E, {"RADARR_APIKEY": key, "QBIT_PASS": "a-long-enough-pass", "QBIT_USER": "admin",
+                                          "SERVER_HOST": "nas.example"}, clear=True):
+            services._known["ts"] = 0.0                                                # the cache must not hide a rotation
+            self.assertIn(key, services.secrets())
+            self.assertEqual(services.redact(f"GET /movie failed for {key}"), "GET /movie failed for ***")
+            self.assertEqual(services.redact("a-long-enough-pass"), "***")
+            self.assertEqual(services.redact("connecting to nas.example as admin"), "connecting to nas.example as admin")
+            self.assertEqual(services.redact(RuntimeError(f"401 with {key}")), "401 with ***")   # an exception, not just a string
+    def test_a_short_value_is_left_alone_so_output_is_not_mangled(self):
+        with mock.patch.dict(services.E, {"QBIT_PASS": "abc"}, clear=True):
+            services._known["ts"] = 0.0
+            self.assertNotIn("abc", services.secrets())
+            self.assertEqual(services.redact("abcdef — 3 abc torrents"), "abcdef — 3 abc torrents")
+    def test_a_key_from_another_app_s_own_file_can_be_registered(self):
+        services.add_secret("bazarr-key-registered"); services.add_secret("short")
+        self.assertEqual(services.redact("bazarr-key-registered"), "***")
+        self.assertEqual(services.redact("short"), "short")
+
+
 class ReadQbit(unittest.TestCase):
     def qbit(self, prefs):
         op = mock.Mock(); op.open = lambda url, timeout=None: io.BytesIO(json.dumps(prefs).encode())

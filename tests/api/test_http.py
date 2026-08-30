@@ -194,6 +194,55 @@ class Sections(unittest.TestCase):
                 self.assertIn(sub["text"], " ".join([i["title"], i.get("detail") or ""] + (i.get("facts") or [])), kind)
 
 
+class SecretsAtRest(unittest.TestCase):
+    """docs/CONFIGURATION.md: the keys are not encrypted and the reasoning is written down. The two things
+    that ARE promised — the file is the owner's alone, and no key leaves the panel — are asserted here."""
+    def test_the_panel_refuses_to_start_on_a_world_readable_config(self):
+        import subprocess, tempfile
+        root = tempfile.mkdtemp(prefix="mc-perm-"); cfg = os.path.join(root, "app.env")
+        with open(cfg, "w") as f: f.write("RADARR_APIKEY=0123456789abcdef0123\n")
+        os.chmod(cfg, 0o644)
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "CONTROLLARR_ENV": cfg, "CONTROLLARR_DIR": root,
+               "CONTROLLARR_PORT": str(harness.free_port()), "PYTHONDONTWRITEBYTECODE": "1"}
+        r = subprocess.run([sys.executable, os.path.join(harness.APP, "controllarr.py")], env=env, cwd=root,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("refusing to start", r.stdout); self.assertIn("0644", r.stdout)
+        self.assertIn(f"chmod 600 {cfg}", r.stdout)                       # it says exactly how to fix it
+        self.assertNotIn("0123456789abcdef0123", r.stdout + r.stderr)     # and never echoes the key it is protecting
+    def test_no_endpoint_and_no_log_line_carries_a_key(self):
+        c = H.admin_cookie()
+        paths = ["/", "/settings", "/api/board", "/api/attention", "/api/live", "/api/system", "/api/reference",
+                 "/api/me", "/api/users", "/api/roles", "/api/config/export", "/api/config/presets",
+                 "/api/item?kind=movie&id=2", "/api/series-tree?seriesId=12", "/api/episodes?seriesId=12",
+                 "/api/rootfolders?kind=movie", "/api/qualityprofiles?kind=movie", "/api/releases?kind=movie&id=2",
+                 "/api/sub-search?kind=movie&id=1", "/api/consequence?action=purge&kind=movie&id=2",
+                 "/api/set/radarr", "/api/set/qbit", "/api/set/bazarr", "/api/set/notify", "/api/set/jellyfin"]
+        seen = []
+        for p in paths:
+            body = H.get(p, c)[2].decode(errors="replace")
+            for name, key in fake_stack.KEYS.items():
+                if key in body: seen.append((p, name))
+            if fake_stack.QBIT_PASS in body: seen.append((p, "qbit password"))
+        self.assertEqual(seen, [])
+        log = H.panel_log()
+        self.assertEqual([k for k in list(fake_stack.KEYS.values()) + [fake_stack.QBIT_PASS] if k in log], [])
+        # and the guarantee has teeth: ask the panel to echo a key straight back into a response body
+        key = fake_stack.KEYS["radarr"]
+        st, cq = H.json("/api/consequence?action=t_delete&name=" + key, c)
+        self.assertIn("Removes *** from qBittorrent", cq["text"]); self.assertNotIn(key, json.dumps(cq))
+    def test_the_overrides_file_the_panel_writes_is_private(self):
+        """settings.local carries the ntfy URL, which can carry a token."""
+        st, j = H.post("/api/set/notify", {"quiet_start": "1", "quiet_end": "8", "topic_media": "media",
+                                           "topic_admin": "admin", "ntfy_url": "http://ntfy.example/tkn_secret"}, H.admin_cookie())
+        self.assertTrue(j.get("ok"), j)
+        local = os.path.join(H.sb_dir, "settings.local")
+        self.assertEqual(stat.S_IMODE(os.stat(local).st_mode), 0o600)
+        st, j = H.json("/api/config/export", H.admin_cookie())            # a snapshot is made to be shared
+        self.assertNotIn("ntfy_url", j.get("notify", {}))
+        self.assertNotIn("tkn_secret", json.dumps(j))
+
+
 class SourceFailures(unittest.TestCase):
     def test_a_dead_service_is_reported_not_hidden(self):
         """Fresh panel so no cached value masks the outage; the section keeps working and names the source."""

@@ -26,7 +26,7 @@ Dependency first, then cheapest to riskiest.
 | # | Item | Done | Why here | Main seam |
 |---|---|---|---|---|
 | 1 | [Incognito mode](#1-incognito-mode) | ☑ | small, self-contained; unblocks honest screenshots for every later item | the render layer |
-| 2 | [Secrets at rest](#2-secrets-at-rest) | ☐ | fix the credential choke point *before* four more credentials arrive | `services.load_env`, `services.apikey` |
+| 2 | [Secrets at rest](#2-secrets-at-rest) | ☑ | fix the credential choke point *before* four more credentials arrive | `services.load_env`, `services.apikey` |
 | 3 | [The action log](#3-the-action-log) | ☐ | defines the event record that notifications will subscribe to | `do_action` |
 | 4 | [Notification channels](#4-notification-channels) | ☐ | needs 2 (tokens) and 3 (events) | `ntfy_test`, `NTFY_URL` |
 | 5 | [Calendar](#5-calendar) | ☐ | independent; the panel's missing axis | `panel_data`, a new source |
@@ -57,6 +57,16 @@ name of the thing about to be purged. The `do_action` log line must keep the rea
 pseudonyms is not an audit trail.
 
 ## 2. Secrets at rest
+
+**Built, as the third option below: the encryption was judged theatre and the plaintext path hardened instead.**
+[CONFIGURATION.md ▸ Your keys](CONFIGURATION.md#your-keys) states what that does and does not protect against;
+`services.py` holds the seam. Two things settled it. The panel starts unattended, so the passphrase would have
+to sit on the same disk as the ciphertext and be readable by the same process. And with `CONFIG_DIR` set the
+panel holds no copy of the key at all — it reads Radarr's own cleartext `config.xml`, which is not ours to
+change, so encrypting our copy would leave the original untouched next to it. **A passphrase typed at start is
+still the one thing that would genuinely help, and it is still the owner's trade to make** — it costs an
+unattended restart, and it would only cover a stack whose config tree the panel cannot see. The rest of this
+section is the reasoning it was built from.
 
 **What.** API keys stop living in cleartext in `CONTROLLARR_ENV`, and are decrypted at boot instead.
 

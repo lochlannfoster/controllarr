@@ -33,6 +33,7 @@ Every failing source names itself in the section it belongs to — Controllarr n
 | **No login, everyone is an admin** | `CONTROLLARR_PASSWORD` is empty | Re-run `./install.sh` and set one. Until then treat the URL as public to your LAN. |
 | **Sign everyone out** | sessions live 30 days on disk | Delete `sessions.json` and restart. |
 | **Page is blank or the container restarts** | `docker logs controllarr` | Usually the config file is unreadable; re-run `./install.sh`. |
+| **Refuses to start: *mode 0644 and holds your API keys*** | anyone with an account on the box could read your keys | Do what it says — `chmod 600 <state directory>/controllarr.env` — or re-run `./install.sh`, which repairs it. Why it is a refusal and not a warning: [CONFIGURATION.md ▸ Your keys](CONFIGURATION.md#your-keys). |
 | **Changed a value but nothing happened** | `controllarr.env` is read once at start | `docker compose --env-file .env restart controllarr`. |
 | **Old CSS or JS after a `git pull`** | assets are versioned per request | Restart the container; no hard reload needed. |
 | **No container table in System** | you declined the Docker socket, or it is not mounted | Re-run `./install.sh` and say yes. Everything else works without it. |

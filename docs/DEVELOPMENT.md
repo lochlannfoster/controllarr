@@ -34,7 +34,8 @@ A stdlib `ThreadingHTTPServer` (`Handler`), sibling modules only; vanilla ES mod
 
 - **HTTP/1.1** (`protocol_version`, 30 s idle): every response carries `Content-Length` (bodiless → `0`), `do_POST` reads its body before any early return — otherwise browsers never revalidate and a leftover body is parsed as the next request.
 - **`?v=`:** `asset_ver()` hashes the names, sizes and mtimes under `static/` per request; `_version_imports` rewrites bare relative `./x.js` imports. Anything else is served unversioned.
-- **Files Controllarr writes** (`users.json`, `sessions.json` 0600; `settings.local`; `cache/`) are chowned back to the directory owner (`_own_like_dir`).
+- **Files Controllarr writes** (`users.json`, `sessions.json`, `settings.local` 0600; `cache/`) are chowned back to the directory owner (`_own_like_dir`).
+- **Secrets** live in `services.py` and nowhere else: `config_problems` refuses to start the panel on a config anyone else can read (called first in `__main__`), and `redact` scrubs every secret from any text on its way out — `_send`, the `/api/board` body, the `do_action` log line and every error print. A key read from another app's own file registers itself with `add_secret`. Values shorter than `MIN_SECRET` are left alone, or scrubbing would mangle unrelated text. They are deliberately not encrypted; the reasoning is in the module comment and in [CONFIGURATION.md ▸ Your keys](CONFIGURATION.md#your-keys).
 - `settings_ops.py` is the single writer of app settings — the installer of a bigger stack and this panel must agree.
 - The Docker socket is **read-only by design**: Controllarr never starts or stops a container.
 - Privileged actions live in `_CAP_FOR`; unknown `/api/` paths are a JSON 404, never the page shell; `HEAD` is 501.

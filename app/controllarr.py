@@ -8,7 +8,7 @@ with persisted sessions. docs/DASHBOARD.md explains operating it."""
 import hashlib, html, http.cookiejar, json, os, re, secrets as _secrets, threading, time, urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import board_gen, settings_ops, library_import, panel_data
-from services import http as H, apikey, E, CONFIG_DIR
+from services import http as H, apikey, E, CONFIG_DIR, redact, add_secret, config_problems
 
 PORT = int(os.environ.get("CONTROLLARR_PORT", "3002"))
 REFRESH = int(os.environ.get("CONTROLLARR_REFRESH", "15"))
@@ -55,7 +55,7 @@ def _save_sessions():
             tmp = SESSIONS_FILE + ".tmp"
             with open(tmp, "w") as f: json.dump(SESSIONS, f)
             os.chmod(tmp, 0o600); os.replace(tmp, SESSIONS_FILE); _own_like_dir(SESSIONS_FILE)
-    except Exception as e: print("sessions: could not save:", e, flush=True)
+    except Exception as e: print("sessions: could not save:", redact(e), flush=True)
 
 # ---------------- static assets (CSS / JS / fonts / icons) + page templates ----------------
 # Served from scripts/static next to this file (the installer copies the directory). Allowlisted
@@ -245,7 +245,9 @@ def qbit(fresh=False):
 def _bazarr_key():
     try:
         for ln in open(os.path.join(CONFIG_DIR, "bazarr", "config", "config.yaml")):
-            if ln.strip().startswith("apikey:"): return ln.split(":", 1)[1].strip().strip("'\"")
+            if ln.strip().startswith("apikey:"):
+                k = ln.split(":", 1)[1].strip().strip("'\"")
+                add_secret(k); return k                      # so it can never appear in a response or a log line
     except Exception: pass
     return None
 
@@ -288,7 +290,7 @@ def bazarr_api(path, method="POST", fields=None, timeout=25):
         try: return True, json.loads(body) if body else True
         except Exception: return True, None
     except Exception as e:
-        print("bazarr_api error:", path, e, flush=True); return False, None
+        print("bazarr_api error:", path, redact(e), flush=True); return False, None
 
 # Optional: with a Docker socket mounted read-only Controllarr can also show every container's state, memory and
 # last log line. Set DOCKER_SOCK= (empty) and it simply does not offer that.
@@ -336,7 +338,9 @@ def sub_map():
     return out
 
 def _js_key():
-    try: return json.load(open(os.path.join(CONFIG_DIR, "jellyseerr", "settings.json")))["main"]["apiKey"]
+    try:
+        k = json.load(open(os.path.join(CONFIG_DIR, "jellyseerr", "settings.json")))["main"]["apiKey"]
+        add_secret(k); return k                              # so it can never appear in a response or a log line
     except Exception: return None
 def js(path, method="GET", data=None):
     k = _js_key()
@@ -356,6 +360,8 @@ def write_local(updates):
     cur = read_local(); cur.update({k: str(v) for k, v in updates.items()})
     with open(LOCAL, "w") as f:
         for k, v in cur.items(): f.write(f"{k}={v}\n")
+    try: os.chmod(LOCAL, 0o600)                              # it carries the ntfy URL, which can carry a token
+    except Exception: pass
     _own_like_dir(LOCAL)
 
 # ---------------- live data (background regeneration) ----------------
@@ -753,10 +759,10 @@ def do_action(a, sess=None):
     try:
         ok, msg = _do_action(a, sess)
     except Exception as e:
-        ok, msg = False, f"{action} failed: {str(e)[:120]}"
+        ok, msg = False, f"{action} failed: {redact(e)[:120]}"
     who = (sess or {}).get("user", "-"); role = (sess or {}).get("role", "-")
     tgt = a.get("hash") or (f"{a.get('kind')}:{a.get('id')}" if a.get("id") is not None else a.get("reqId") or "-")
-    print(f"action user={who} role={role} action={action} target={tgt} result={'ok' if ok else 'fail'} ms={round((time.time() - t0) * 1000)} msg={json.dumps(str(msg)[:100])}", flush=True)
+    print(f"action user={who} role={role} action={action} target={tgt} result={'ok' if ok else 'fail'} ms={round((time.time() - t0) * 1000)} msg={json.dumps(redact(msg)[:100])}", flush=True)
     return ok, msg
 def _do_action(a, sess=None):
     action = a.get("action"); kind = a.get("kind"); aid = a.get("id")
@@ -1138,7 +1144,8 @@ def ntfy_test():
 
 # ---- config snapshot / presets (per app, through the same read/apply path as the tabs) ----
 _SNAP_TABS = ("radarr", "sonarr", "qbit", "bazarr", "notify")
-_SNAP_SKIP = {"providers", "cap"}   # derived / read-only keys, not settings
+_SNAP_SKIP = {"providers", "cap",   # derived / read-only keys, not settings
+               "ntfy_url"}          # a credential (a token can be in the URL); a snapshot is made to be shared
 _ARR_DEF = {"size_cap": 20, "size_max": 50, "min_seeders": 5, "audio_language": "Original", "allow_unknown": False,
             "prefer_h264": False, "propers": True, "rename": True, "copy_hardlinks": True, "recycle_days": 7, "min_free_mb": 1000}
 DEFAULTS = {   # sensible baseline = the installer's defaults (the download guardrail is respected)
@@ -1301,7 +1308,8 @@ class Handler(BaseHTTPRequestHandler):
     timeout = 30
     def log_message(self, *a): pass
     def _send(self, code, body, ctype="text/html; charset=utf-8", cookie=None):
-        b = body.encode() if isinstance(body, str) else body
+        # the one place every text response passes: no secret leaves here, whatever composed it
+        b = redact(body).encode() if isinstance(body, str) else body
         self.send_response(code); self.send_header("Content-Type", ctype)
         if cookie: self.send_header("Set-Cookie", cookie)
         self.send_header("Content-Length", str(len(b))); self.end_headers()
@@ -1353,7 +1361,7 @@ class Handler(BaseHTTPRequestHandler):
             etag = '"' + hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode()).hexdigest()[:16] + '"'
             if self.headers.get("If-None-Match") == etag:
                 self.send_response(304); self.send_header("ETag", etag); self.send_header("Cache-Control", "private, no-cache"); self.send_header("Content-Length", "0"); self.end_headers(); return
-            b = json.dumps(obj).encode()
+            b = redact(json.dumps(obj)).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("ETag", etag); self.send_header("Cache-Control", "private, no-cache")
             self.send_header("Content-Length", str(len(b))); self.end_headers()
             try: self.wfile.write(b)
@@ -1520,7 +1528,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/action":
                 ok, msg = do_action(body, sess); return self._send(200 if ok else (403 if "permitted" in str(msg) else 400), json.dumps({"ok": ok, "message": msg}), "application/json")
         except Exception as e:
-            print(f"error path={path} {type(e).__name__}: {str(e)[:200]}", flush=True)
+            print(f"error path={path} {type(e).__name__}: {redact(e)[:200]}", flush=True)
             return self._send(500, json.dumps({"ok": False, "message": "The panel hit an error handling that — see the controllarr logs"}), "application/json")
         self._send(404, "not found", "text/plain")
 
@@ -1566,6 +1574,12 @@ DOCS_INNER = """<div class=doc>
 </div>"""
 
 if __name__ == "__main__":
+    for _p, _m in config_problems():
+        print(f"controllarr: refusing to start — {_p} is mode {_m:04o} and holds your API keys, so anyone with "
+              f"an account on this box can read them.\n"
+              f"             fix it with:  chmod 600 {_p}\n"
+              f"             (or re-run ./install.sh, which writes it that way)", flush=True)
+        raise SystemExit(1)
     threading.Thread(target=_loop, daemon=True).start()
     print(f"control panel on :{PORT} (refresh {REFRESH}s, auth={'on' if PASSWORD else 'off'})", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
