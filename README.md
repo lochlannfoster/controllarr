@@ -70,7 +70,8 @@ With a read-only Docker socket it also shows each container's state, memory and 
 </table>
 
 <sub>Click any shot for the full-size image. They are captured against the test stack in
-<code>tests/fake_stack.py</code> — every title, user and host in them is made up.</sub>
+<code>tests/fake_stack.py</code>: the films and shows are real, everything else — users, hosts, paths,
+sizes and states — is invented. No screenshot here shows anybody's library.</sub>
 
 Stdlib Python and vanilla ES modules: no build step, no framework, no telemetry, nothing
 loaded from outside your network.
