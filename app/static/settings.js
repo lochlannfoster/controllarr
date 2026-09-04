@@ -378,8 +378,8 @@ async function renderBackup(data) {
     h('div', { class: 'frow' }, h('span', { class: 'flabel' }, 'Automatic snapshot'),
       rb.taken ? pill('ok', fmt.age(Date.now() / 1000 - rb.taken) + ' ago') : pill('muted', 'none yet'),
       h('span', { class: 'fhelp' }, rb.before ? 'taken before ' + rb.before : 'one is taken before every sync')),
-    h('div', { class: 'dwbtns' }, h('button', { type: 'button', class: 'btn', disabled: !rb.taken, title: 'Put every quality profile and size limit back as this snapshot found them', onclick: async e => {
-      if (!await confirmDialog({ title: 'Roll back the last sync', text: 'Restores every quality profile and every per-quality size limit to the snapshot taken before ' + (rb.before || 'the last sync') + '. Custom formats the sync added stay, scored 0.', verb: 'Roll back', danger: true })) return;
+    h('div', { class: 'dwbtns' }, h('button', { type: 'button', class: 'btn', disabled: !rb.taken, title: 'Put every setting back as this snapshot found it \u2014 not the quality profiles alone', onclick: async e => {
+      if (!await confirmDialog({ title: 'Roll back the last sync', text: 'Puts every setting back as the snapshot taken before ' + (rb.before || 'the last sync') + ' found it: the quality profiles and per-quality size limits, and Downloads, Movies, TV, Subtitles and Notifications with them. Anything you changed after that sync is undone too. Custom formats the sync added stay, scored 0.', verb: 'Roll back', danger: true })) return;
       const b = e.target; b.disabled = true; setText(b, 'Rolling back\u2026');
       const j = await api('/api/trash/rollback', {}); toast(j.message, j.ok ? 'ok' : 'error'); show('backup');
     } }, 'Roll back'))));

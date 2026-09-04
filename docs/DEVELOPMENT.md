@@ -81,6 +81,10 @@ reads and diffs it and writes nothing, **`settings_ops.apply_trash`** is the onl
   the quality definitions, all keyed by *name* so a snapshot still means something on another box, and with
   zero scores dropped so two identical profiles compare equal. `_write_rollback` takes that snapshot before
   every apply; `apply_arr_state` puts it back and leaves a profile the sync created in place, naming it.
+  Because it *is* the settings snapshot, rolling back restores the whole of it — `apply_config` applies every
+  one of `_SNAP_TABS` (Downloads, Movies, TV, Subtitles, Notifications) before `apply_arr_state` — so a
+  setting changed after the sync is undone with it. The confirmation says so; it is the price of one
+  mechanism rather than two.
 - **`refresh()` is the only outbound request in the panel**, it is reached only from a button, and it reads
   tarball members by name rather than extracting, so a hostile archive cannot write outside the state directory.
 
@@ -94,7 +98,7 @@ reads and diffs it and writes nothing, **`settings_ops.apply_trash`** is the onl
 | `unit` | helpers, the config loader, `board_gen`, `Sources`, the VPN namespace check, consequence text, `settings_ops` readers, the action log's ring and redaction, the vendored guide and the diff it produces against a dictionary-shaped arr | 1 s |
 | `api` | the auth gate, HTTP/1.1 invariants, 404 JSON, ETags, every section's contract, source failures, **what an install without a given service or without a Docker socket does**, capabilities, presets, the action log (its entries, who may read it, that it outlives the process), the TRaSH sync (that a preview writes nothing, that the snapshot exists before the first write, the write order, and that a rollback restores exactly), every action's wiring and the three purge scopes — asserted on the fake's call log | 50 s |
 | `compose` | `docker compose config` on the shipped file | 1 s |
-| `e2e` / `a11y` | Playwright, headless Chromium: sign-in, the Dash, every section, the library, the season tree and episode dialog, groups, the system strip, Settings, the five widget states through the fake's `/_control`, confirmations, roles, the action log, incognito (the pseudonym's own properties, and a sweep for any real name left on the page), and the phone floor. Every test fails on any console error or 4xx/5xx. axe on every surface | 90 s |
+| `e2e` / `a11y` | Playwright, headless Chromium: sign-in, the Dash, every section, the library, the season tree and episode dialog, groups, the system strip, Settings, the five widget states through the fake's `/_control`, confirmations, roles, the action log, incognito (the pseudonym's own properties, and a sweep for any real name left on the page), and the phone floor. **Three `controls-*` specs press every control in turn and assert the request it makes** (below). Every test fails on any console error or 4xx/5xx. axe on every surface | 220 s |
 | `archive` | the committed `app/` boots and answers every section | 5 s |
 | `py312` | unit + api inside `python:3.12-alpine` | 15 s |
 
@@ -106,6 +110,29 @@ tests/run.sh serve     # keep the panel + fake up for a browser (prints URL and 
 ```
 
 Setup: `npm ci && npx playwright install --with-deps chromium` (Node ≥ 18). Driving the fake: `POST {"down": [...]}` / `{"up": [...]}` / `{"scenario": "default|empty|container_down|backup_stale"}` / `{"clear_calls": true}` / `{"reset": true}`.
+
+### 4.1 Every control, and the call it makes
+
+The other browser specs check what a screen *says*; `tests/e2e/controls-dash.spec.mjs` (the header, the Dash,
+Live, Needs attention, the library tools and the bulk bar), `controls-item.spec.mjs` (the drawer, the season
+tree, the episode dialog and the episode toolbar) and `controls-settings.spec.mjs` (all thirteen groups)
+check what a control *does*. Each one clears the fake's call log, presses the control, and asserts the exact
+request that reached Radarr, Sonarr, Bazarr, Jellyfin, Jellyseerr, Prowlarr, ntfy or qBittorrent — the id or
+hash included, because acting on the wrong title is the failure that matters.
+
+The other half is asserted just as carefully: a control that is only meant to change this browser (theme,
+density, incognito, a filter, a station, folding a season) must reach **no** backend at all, a cancelled
+confirmation must write nothing, and a TRaSH preview or a snapshot export must be GETs only. A view control
+that quietly writes is the worse bug.
+
+Two habits these specs depend on, both of which cost an afternoon to learn:
+
+- **Reset the fake *and* the panel.** `{"reset": true}` restores the fake's data, but the panel is still
+  holding the board it read a moment ago, so a title an earlier test unmonitored or purged is still missing.
+  `POST /api/refresh` — what the header's re-scan control posts — drops that cache.
+- **Address a row by its key, never its position.** Torrent rows are ordered by queue position, which a
+  reset reshuffles; `article.tor[data-key="<hash>"]` is stable, and it also says which torrent the assertion
+  is about.
 
 ## 5. Adding things
 

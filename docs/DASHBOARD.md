@@ -30,7 +30,7 @@ Related: [INSTALL.md](INSTALL.md) · [CONFIGURATION.md](CONFIGURATION.md) · [TR
 
 What any of this may grab is decided by the title's **quality profile**, which is why every row carries one and the chip changes it for that title alone. What each profile allows, and what it scores, is the guide's — [TRaSH Guides](#trash-guides).
 
-**Multi-select bar** — tick whole titles (a show whose every episode is ticked counts as ticked): **Search…** (one), **Retry**, **Refresh**, **Monitor**, **Unmonitor**, **Blocklist**, **Quality** (one), **Top**, **Bottom**, **Pause**, **Resume**, **Purge** (the whole title), **Clear**. Polling pauses while anything is ticked.
+**Multi-select bar** — tick whole titles (a show whose every episode is ticked counts as ticked): **Search…** (one), **Retry**, **Refresh**, **Monitor**, **Unmonitor**, **Blocklist** (asks first, naming the titles), **Quality** (one), **Top**, **Bottom**, **Pause**, **Resume**, **Purge** (the whole title), **Clear**. Polling pauses while anything is ticked.
 
 **Reference** — every configured app with its version and a link, and the glossary.
 
@@ -92,7 +92,7 @@ Admin only, grouped by what you control. Each group loads the app's **current** 
 | **Notifications** | ntfy URL, topics, quiet hours, **Send a test notification** | `settings.local` (and whatever else on your box reads it) |
 | **Users & roles** | accounts (add, change password, remove — never the last admin); what standard users may do | `users.json` |
 | **Action log** | every write the panel has made, newest first, filtered by user or by action — when, who, what, the target it acted on, whether it worked and how long it took. Read-only: no undo, nothing to edit, nothing to clear | reads `actions.log` |
-| **Backup & config** | last backup age; the automatic snapshot taken before the last sync and **Roll back**; save / load a settings snapshot; **Restore installer defaults** | all of the above |
+| **Backup & config** | last backup age; the automatic snapshot taken before the last sync and **Roll back** (it restores every group in that snapshot, not the quality profiles alone — the confirmation names them); save / load a settings snapshot; **Restore installer defaults** | all of the above |
 
 **Roles.** Standard users can search, retry, monitor, change quality, fetch subtitles and pause / resume / reorder torrents. Eight grantable permissions: `can_purge` (every purge: title, torrent, season, episode), `can_delete_files`, `can_import`, `can_remove` (remove torrents, blocklist), `can_change_root`, `can_grab`, `can_control_client` (pause/resume all, alt-speed, caps, force-start, RSS sync, indexer tests, Jellyfin scan), `can_manage_requests`. The UI hides what a role cannot do; the server refuses it regardless (`403 Not permitted`).
 

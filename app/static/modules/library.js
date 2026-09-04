@@ -137,8 +137,14 @@ export function createLibrary(host, ctx) {
     if (action === 'ase' || action === 'quality') { if (items.length !== 1) return toast('Pick exactly one title for that', 'warn'); return action === 'ase' ? releasePicker(items[0]) : qualityPicker(items[0]); }
     let extra = {};
     if (action === 'monitor_on' || action === 'monitor_off') { extra = { monitored: action === 'monitor_on' }; action = 'monitor_set'; }
+    const named = () => items.map(i => incog.mask(i.title, i.kind + ':' + i.id)).slice(0, 5).join(', ') + (items.length > 5 ? '…' : '');
+    const n = `${items.length} title${items.length > 1 ? 's' : ''}`;
     if (action === 'purge') {
-      const ok = await ctx.confirm({ title: `Purge ${items.length} title${items.length > 1 ? 's' : ''}`, text: `Deletes their files, torrents and Jellyseerr requests: ${items.map(i => incog.mask(i.title, i.kind + ':' + i.id)).slice(0, 5).join(', ')}${items.length > 5 ? '…' : ''}. Can't be undone.`, verb: 'Purge', danger: true });
+      const ok = await ctx.confirm({ title: `Purge ${n}`, text: `Deletes their files, torrents and Jellyseerr requests: ${named()}. Can't be undone.`, verb: 'Purge', danger: true });
+      if (!ok) return;
+    }
+    if (action === 'blocklist_retry') {
+      const ok = await ctx.confirm({ title: `Blocklist ${n}`, text: `Blocks the release each one is downloading so it is never picked again and removes its torrent from qBittorrent, then searches for a different release: ${named()}. Files already imported are kept.`, verb: 'Blocklist', danger: true });
       if (!ok) return;
     }
     let bad = 0;
@@ -183,7 +189,9 @@ export function createLibrary(host, ctx) {
   async function refreshDrawer() {
     if (!DW || !dwEl) return;
     try { const D = await (await fetch(`/api/item?kind=${DW.kind}&id=${DW.id}`)).json(); if (D && D.id) Object.assign(DW, { tmdbId: D.tmdbId, tvdbId: D.tvdbId, title: D.title }); renderDrawer(D); }
-    catch (e) { append(clear(dwEl), h('div', { class: 'dwhead' }, h('div', { class: 'dt' }, 'Couldn\'t load this title'), h('button', { type: 'button', class: 'btn btn-icon dwx', 'aria-label': 'Close', onclick: () => dwEl.close() }, '×')), errorState('The panel could not reach Radarr/Sonarr', String(e), refreshDrawer)); }
+    // The guard at the top of this function ran before the await; the drawer's close handler nulls dwEl,
+    // so a fetch that fails after the drawer was closed must not try to draw an error into it.
+    catch (e) { if (!dwEl) return; append(clear(dwEl), h('div', { class: 'dwhead' }, h('div', { class: 'dt' }, 'Couldn\'t load this title'), h('button', { type: 'button', class: 'btn btn-icon dwx', 'aria-label': 'Close', onclick: () => dwEl.close() }, '×')), errorState('The panel could not reach Radarr/Sonarr', String(e), refreshDrawer)); }
   }
   async function drawerAct(action, extra, opts = {}) {
     const j = await ctx.runAction({ confirm: opts.confirm, body: Object.assign({ action }, DW || {}, extra || {}) });
