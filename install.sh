@@ -2,6 +2,11 @@
 # Controllarr installer — points the panel at an *arr stack you already run. Interactive, idempotent.
 # Usage: ./install.sh          (interactive)
 #        ./install.sh --help
+#
+# SC2154 is off for this file: every prompt variable is filled by ask/ask_path/ask_hidden in
+# lib/common.sh, which assign through `printf -v "$__var"`. ShellCheck cannot see an assignment made
+# through a name held in a variable, so it reads every answered prompt as an unassigned reference.
+# shellcheck disable=SC2154
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOGFILE="$HERE/install-$(date +%Y%m%d-%H%M%S).log"
@@ -113,7 +118,7 @@ SERVICES=()
 # ask_service NAME LABEL DEFAULT_PORT NEEDS_KEY
 ask_service() {
   local name="$1" label="$2" dport="$3" needs_key="$4"
-  local U=$(echo "$name" | tr '[:lower:]' '[:upper:]'); [ "$name" = qbittorrent ] && U=QBIT
+  local U; U=$(echo "$name" | tr '[:lower:]' '[:upper:]'); [ "$name" = qbittorrent ] && U=QBIT
   local host_def="${OLD[${U}_HOST]:-$DEF_APP_HOST}"
   [ "$NET_MODE" = network ] && [ -z "${OLD[${U}_HOST]:-}" ] && host_def="$name"
   local h p k

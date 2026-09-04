@@ -50,11 +50,23 @@ run() {
 }
 
 # ---------------------------------------------------------------- stages
+# shellcheck, from the image when the binary is absent. A stage that prints "skipped" and passes is a stage
+# that is not running: this suite reported a clean lint for the life of the repository on a machine with no
+# shellcheck installed, and CI — which installs it — found four warnings the first time it ran. Called from
+# inside "$R" so the globs expand against the repository.
+_shellcheck() {
+  if command -v shellcheck >/dev/null; then shellcheck -S warning "$@"; return $?; fi
+  if command -v docker >/dev/null; then
+    echo "(no shellcheck binary — using koalaman/shellcheck:stable)"
+    docker run --rm -v "$R":/mnt -w /mnt koalaman/shellcheck:stable -S warning "$@"; return $?
+  fi
+  echo "shellcheck: no binary and no docker — SKIPPED, and this stage is therefore incomplete"
+  return 0
+}
 stage_lint() {
   local rc=0
   echo "== bash -n"; bash -n "$R"/install.sh "$R"/uninstall.sh "$R"/lib/*.sh "$T"/run.sh || rc=1
-  if command -v shellcheck >/dev/null; then echo "== shellcheck"; shellcheck -S warning "$R"/install.sh "$R"/uninstall.sh "$R"/lib/*.sh || rc=1
-  else echo "== shellcheck: not installed (apt install shellcheck) — skipped"; fi
+  echo "== shellcheck"; ( cd "$R" && _shellcheck install.sh uninstall.sh lib/*.sh ) || rc=1
   echo "== ast.parse"; python3 -I -c 'import ast,sys
 for p in sys.argv[1:]:
     ast.parse(open(p, encoding="utf-8").read(), p)' "$R"/app/*.py "$T"/*.py "$T"/lib/*.py "$T"/unit/*.py "$T"/api/*.py || rc=1

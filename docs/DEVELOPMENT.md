@@ -94,7 +94,7 @@ reads and diffs it and writes nothing, **`settings_ops.apply_trash`** is the onl
 
 | Stage | What | Time |
 |---|---|---|
-| `lint` | `bash -n` (+ shellcheck), `ast.parse`, `ruff`, `node --check` of every ES module via stdin, Markdown links (they must exist, and — from a tracked file — be tracked, so a published doc cannot point at something only this checkout has), JSON | 2 s |
+| `lint` | `bash -n`, shellcheck (from `koalaman/shellcheck:stable` when no binary is installed, so the stage cannot quietly become a no-op; `install.sh` disables SC2154 file-wide because `ask` fills every prompt variable through `printf -v "$__var"`), `ast.parse`, `ruff`, `node --check` of every ES module via stdin, Markdown links (they must exist, and — from a tracked file — be tracked, so a published doc cannot point at something only this checkout has), JSON | 2 s |
 | `unit` | helpers, the config loader, `board_gen`, `Sources`, the VPN namespace check, consequence text, `settings_ops` readers, the action log's ring and redaction, the vendored guide and the diff it produces against a dictionary-shaped arr | 1 s |
 | `api` | the auth gate, HTTP/1.1 invariants, 404 JSON, ETags, every section's contract, source failures, **what an install without a given service or without a Docker socket does**, capabilities, presets, the action log (its entries, who may read it, that it outlives the process), the TRaSH sync (that a preview writes nothing, that the snapshot exists before the first write, the write order, and that a rollback restores exactly), every action's wiring and the three purge scopes — asserted on the fake's call log | 50 s |
 | `compose` | `docker compose config` on the shipped file | 1 s |
