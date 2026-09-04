@@ -1,0 +1,96 @@
+# tests/run.sh, run on every push instead of when someone remembers.
+#
+# The suite is thorough and entirely self-contained — the browser tests bring their own server
+# (tests/harness.py against tests/fake_stack.py) and no stage touches a real service — so the only thing
+# standing between it and CI was writing this file.
+#
+# Two jobs rather than one `tests/run.sh all`: the browser stage costs a Chromium download and the rest
+# takes seconds, and a failure that names its own job is a failure you can read from the commit list.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: lint, unit, api, compose, archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # the archive stage runs `git archive HEAD app`: it tests the committed tree, not the checkout,
+        # and needs real history rather than a tarball export.
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'   # the interpreter in the panel's container
+
+      # ruff and shellcheck are optional to run.sh — it prints "skipped" and passes without them. In CI a
+      # skipped stage is a stage that is not running, so install ruff and fail if the runner lacks the rest.
+      - name: Install test dependencies
+        run: |
+          python -m pip install --quiet ruff
+          for t in shellcheck node npx docker ruff; do
+            command -v "$t" >/dev/null || { echo "::error::$t is missing from the runner"; exit 1; }
+          done
+
+      - name: lint, unit, api
+        run: tests/run.sh quick
+
+      - name: compose
+        run: tests/run.sh compose
+
+      - name: the committed app boots
+        run: tests/run.sh archive
+
+      - name: unit and api under python:3.12-alpine
+        run: tests/run.sh py312
+
+      - name: Collect stage logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs
+          path: ~/.local/state/mediastack-tests/logs/
+          if-no-files-found: ignore
+
+  browser:
+    name: e2e and accessibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Playwright
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      # playwright.config.mjs sets forbidOnly from CI, so a stray test.only fails the run rather than
+      # quietly reducing the suite to one test.
+      - name: e2e and axe (tests/run.sh e2e)
+        run: tests/run.sh e2e
+
+      - name: Collect traces and screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            test-results/
+            ~/.local/state/mediastack-tests/logs/
+          if-no-files-found: ignore
